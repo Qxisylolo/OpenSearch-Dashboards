@@ -17,6 +17,7 @@ import {
   EuiSpacer,
   EuiHeaderSectionItemButtonProps,
   EuiButtonIcon,
+  EuiAvatar,
   EuiRadioGroup,
   EuiTextColor,
   EuiPopover,
@@ -138,12 +139,13 @@ export const RecentItems = ({
         <EuiButtonEmpty
           data-test-subj="preferencesSettingButton"
           flush="left"
+          size="xs"
           color="primary"
           onClick={() => {
             setIsPreferencesPopoverOpen((IsPreferencesPopoverOpe) => !IsPreferencesPopoverOpe);
           }}
         >
-          Preferences
+          <EuiIcon type="managementApp" />
         </EuiButtonEmpty>
       }
       isOpen={isPreferencesPopoverOpen}
@@ -268,16 +270,17 @@ export const RecentItems = ({
       panelPaddingSize="m"
     >
       {renderBreadcrumbs}
-      <EuiSpacer size="s" />
+      <EuiSpacer size="m" />
       <EuiPanel
         hasShadow={false}
         hasBorder={false}
         paddingSize="none"
-        style={{ maxHeight: '35vh', overflow: 'auto' }}
+        style={{ maxHeight: '35vh' }}
+        className="euiYScrollWithShadows"
       >
-        <EuiTitle size="xxs">
+        <EuiText size="m">
           <h4>Recent</h4>
-        </EuiTitle>
+        </EuiText>
         <EuiSpacer size="s" />
         {selectedRecentsItems.length > 0 ? (
           <EuiListGroup flush={true} gutterSize="s">
@@ -291,8 +294,9 @@ export const RecentItems = ({
                     <EuiIcon
                       style={{ marginRight: widthForRightMargin }}
                       type={item.meta.icon || 'apps'}
+                      color="text"
                     />
-                    {item.label}
+                    {item.label + ' '}
                     {item.workspaceName ? (
                       <EuiTextColor color="subdued">({item.workspaceName})</EuiTextColor>
                     ) : null}
@@ -308,7 +312,7 @@ export const RecentItems = ({
             No recently viewed items
           </EuiText>
         )}
-        <EuiSpacer size="s" />
+        <EuiSpacer size="m" />
       </EuiPanel>
       {preferencePopover}
     </EuiPopover>
