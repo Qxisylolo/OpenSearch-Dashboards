@@ -276,7 +276,7 @@ export const RecentItems = ({
         style={{ maxHeight: '35vh' }}
         className="euiYScrollWithShadows"
       >
-        <EuiText size="m">
+        <EuiText size="s">
           <h4>Recent</h4>
         </EuiText>
         <EuiSpacer size="s" />
