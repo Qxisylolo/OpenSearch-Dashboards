@@ -56,9 +56,11 @@ export interface WorkspaceListInnerProps extends WorkspaceListProps {
   excludedColumns?: string[];
 }
 
-interface WorkspaceAttributeWithUseCaseIDAndDataSources extends WorkspaceAttribute {
+interface WorkspaceAttributeWithUseCaseIDAndDataSourceAndOwners
+  extends WorkspaceAttributeWithPermission {
   useCase?: string;
   dataSources?: string[];
+  owners?: string[];
 }
 
 export const WorkspaceList = (props: WorkspaceListProps) => {
@@ -124,22 +126,43 @@ export const WorkspaceListInner = ({
     }
   }, [savedObjects, uiSettings]);
 
-  const newWorkspaceList: WorkspaceAttributeWithUseCaseIDAndDataSources[] = useMemo(() => {
-    return workspaceList.map(
-      (workspace): WorkspaceAttributeWithUseCaseIDAndDataSources => {
-        const associatedDataSourcesTitles = allDataSources
-          .filter((ds) => ds.workspaces && ds.workspaces.includes(workspace.id))
-          .map((ds) => ds.title as string);
-        return {
-          ...workspace,
-          useCase: extractUseCaseTitleFromFeatures(
-            registeredUseCases ?? [],
-            workspace.features ?? []
-          ),
-          dataSources: associatedDataSourcesTitles,
-        };
-      }
-    );
+  // const newWorkspaceList: WorkspaceAttributeWithUseCaseIDAndDataSourceAndOwners[] = useMemo(() => {
+  //   return workspaceList.map((workspace) => {
+  //     const workspaceWithPermissions = workspace as WorkspaceAttributeWithPermission;
+  //     const associatedDataSourcesTitles = allDataSources
+  //       .filter((ds) => ds.workspaces && ds.workspaces.includes(workspace.id))
+  //       .map((ds) => ds.title as string);
+
+  //     const owners =
+  //       workspaceWithPermissions.permissions?.[WorkspacePermissionMode.Write]?.users ?? [];
+  //     return {
+  //       ...workspaceWithPermissions,
+  //       useCase: extractUseCaseFromFeatures(workspace.features ?? []),
+  //       dataSources: associatedDataSourcesTitles,
+  //       owners,
+  //     };
+  //   });
+  // }, [workspaceList, extractUseCaseFromFeatures, allDataSources]);
+
+  const newWorkspaceList: WorkspaceAttributeWithUseCaseIDAndDataSourceAndOwners[] = useMemo(() => {
+    return workspaceList.map((workspace) => {
+      const workspaceWithPermissions = workspace as WorkspaceAttributeWithPermission;
+      const associatedDataSourcesTitles = allDataSources
+        .filter((ds) => ds.workspaces && ds.workspaces.includes(workspace.id))
+        .map((ds) => ds.title as string);
+
+      const owners =
+        workspaceWithPermissions.permissions?.[WorkspacePermissionMode.Write]?.users ?? [];
+      return {
+        ...workspace,
+        useCase: extractUseCaseTitleFromFeatures(
+          registeredUseCases ?? [],
+          workspace.features ?? []
+        ),
+        dataSources: associatedDataSourcesTitles,
+        owners,
+      };
+    });
   }, [workspaceList, allDataSources, registeredUseCases]);
 
   const useCaseFilterOptions = useMemo(() => {
@@ -271,7 +294,7 @@ export const WorkspaceListInner = ({
     tab: DetailTab
   ) => {
     const amount = data.length;
-    const mostDisplayedTitles = data.slice(0, maxDisplayedAmount).join(',');
+    const mostDisplayedTitles = data.slice(0, maxDisplayedAmount).join(', ');
     return amount <= maxDisplayedAmount ? (
       mostDisplayedTitles
     ) : (
@@ -356,12 +379,21 @@ export const WorkspaceListInner = ({
         multiSelect: false,
         options: useCaseFilterOptions,
       },
+      {
+        multiSelect: 'or',
+        type: 'field_value_selection',
+        field: 'owners',
+        name: 'Owners',
+        options: Array.from(new Set(newWorkspaceList.flatMap(({ owners }) => owners || []))).map(
+          (owner) => ({
+            value: owner,
+            name: owner,
+          })
+        ),
+      },
     ],
     toolsLeft: renderToolsLeft(),
   };
-
-  // eslint-disable-next-line
-  console.log('newWorkspace', newWorkspaceList);
 
   const columnsWithoutActions = [
     {
@@ -399,6 +431,7 @@ export const WorkspaceListInner = ({
 
     {
       field: 'description',
+
       name: i18n.translate('workspace.list.columns.description.title', {
         defaultMessage: 'Description',
       }),
@@ -411,7 +444,7 @@ export const WorkspaceListInner = ({
         >
           {/* Here I need to set width manually as the tooltip will ineffect the property : truncateText ',  */}
           <EuiText className="eui-textTruncate" size="xs" style={{ maxWidth: 150 }}>
-            {description}
+            {description ? description : '\u2014'}
           </EuiText>
         </EuiToolTip>
       ),
@@ -620,7 +653,7 @@ export const WorkspaceListInner = ({
           verticalPosition="center"
           horizontalPosition="center"
           paddingSize="m"
-          panelPaddingSize="l"
+          panelPaddingSize="m"
           hasShadow={false}
         >
           {workspaceListTable}
