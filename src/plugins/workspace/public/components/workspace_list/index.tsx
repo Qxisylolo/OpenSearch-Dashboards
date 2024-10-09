@@ -56,11 +56,9 @@ export interface WorkspaceListInnerProps extends WorkspaceListProps {
   excludedColumns?: string[];
 }
 
-interface WorkspaceAttributeWithUseCaseIDAndDataSourceAndOwners
-  extends WorkspaceAttributeWithPermission {
+interface WorkspaceAttributeWithUseCaseIDAndDataSources extends WorkspaceAttribute {
   useCase?: string;
   dataSources?: string[];
-  owners?: string[];
 }
 
 export const WorkspaceList = (props: WorkspaceListProps) => {
@@ -126,43 +124,22 @@ export const WorkspaceListInner = ({
     }
   }, [savedObjects, uiSettings]);
 
-  // const newWorkspaceList: WorkspaceAttributeWithUseCaseIDAndDataSourceAndOwners[] = useMemo(() => {
-  //   return workspaceList.map((workspace) => {
-  //     const workspaceWithPermissions = workspace as WorkspaceAttributeWithPermission;
-  //     const associatedDataSourcesTitles = allDataSources
-  //       .filter((ds) => ds.workspaces && ds.workspaces.includes(workspace.id))
-  //       .map((ds) => ds.title as string);
-
-  //     const owners =
-  //       workspaceWithPermissions.permissions?.[WorkspacePermissionMode.Write]?.users ?? [];
-  //     return {
-  //       ...workspaceWithPermissions,
-  //       useCase: extractUseCaseFromFeatures(workspace.features ?? []),
-  //       dataSources: associatedDataSourcesTitles,
-  //       owners,
-  //     };
-  //   });
-  // }, [workspaceList, extractUseCaseFromFeatures, allDataSources]);
-
-  const newWorkspaceList: WorkspaceAttributeWithUseCaseIDAndDataSourceAndOwners[] = useMemo(() => {
-    return workspaceList.map((workspace) => {
-      const workspaceWithPermissions = workspace as WorkspaceAttributeWithPermission;
-      const associatedDataSourcesTitles = allDataSources
-        .filter((ds) => ds.workspaces && ds.workspaces.includes(workspace.id))
-        .map((ds) => ds.title as string);
-
-      const owners =
-        workspaceWithPermissions.permissions?.[WorkspacePermissionMode.Write]?.users ?? [];
-      return {
-        ...workspace,
-        useCase: extractUseCaseTitleFromFeatures(
-          registeredUseCases ?? [],
-          workspace.features ?? []
-        ),
-        dataSources: associatedDataSourcesTitles,
-        owners,
-      };
-    });
+  const newWorkspaceList: WorkspaceAttributeWithUseCaseIDAndDataSources[] = useMemo(() => {
+    return workspaceList.map(
+      (workspace): WorkspaceAttributeWithUseCaseIDAndDataSources => {
+        const associatedDataSourcesTitles = allDataSources
+          .filter((ds) => ds.workspaces && ds.workspaces.includes(workspace.id))
+          .map((ds) => ds.title as string);
+        return {
+          ...workspace,
+          useCase: extractUseCaseTitleFromFeatures(
+            registeredUseCases ?? [],
+            workspace.features ?? []
+          ),
+          dataSources: associatedDataSourcesTitles,
+        };
+      }
+    );
   }, [workspaceList, allDataSources, registeredUseCases]);
 
   const useCaseFilterOptions = useMemo(() => {
@@ -318,7 +295,7 @@ export const WorkspaceListInner = ({
 
   const renderToolsLeft = () => {
     if (selection.length === 0) {
-      return;
+      return undefined;
     }
 
     const onClick = () => {
@@ -343,21 +320,19 @@ export const WorkspaceListInner = ({
       setSelection([]);
     };
 
-    return (
-      isDashboardAdmin && (
-        <>
-          <EuiButton color="danger" iconType="trash" onClick={onClick}>
-            Delete {selection.length} Workspace
-          </EuiButton>
-          {deletedWorkspaces && deletedWorkspaces.length > 0 && (
-            <DeleteWorkspaceModal
-              selectedWorkspaces={deletedWorkspaces}
-              onClose={() => setDeletedWorkspaces([])}
-            />
-          )}
-        </>
-      )
-    );
+    return isDashboardAdmin ? (
+      <>
+        <EuiButton color="danger" iconType="trash" onClick={onClick}>
+          Delete {selection.length} {selection.length > 1 ? 'workspaces' : 'workspace'}
+        </EuiButton>
+        {deletedWorkspaces && deletedWorkspaces.length > 0 && (
+          <DeleteWorkspaceModal
+            selectedWorkspaces={deletedWorkspaces}
+            onClose={() => setDeletedWorkspaces([])}
+          />
+        )}
+      </>
+    ) : undefined;
   };
 
   const selectionValue: EuiTableSelectionType<WorkspaceAttribute> = {
@@ -378,18 +353,6 @@ export const WorkspaceListInner = ({
         name: 'Use Case',
         multiSelect: false,
         options: useCaseFilterOptions,
-      },
-      {
-        multiSelect: 'or',
-        type: 'field_value_selection',
-        field: 'owners',
-        name: 'Owner',
-        options: Array.from(new Set(newWorkspaceList.flatMap(({ owners }) => owners || []))).map(
-          (owner) => ({
-            value: owner,
-            name: owner,
-          })
-        ),
       },
     ],
     toolsLeft: renderToolsLeft(),
@@ -443,34 +406,11 @@ export const WorkspaceListInner = ({
           data-test-subj="workspaceList-hover-description"
         >
           {/* Here I need to set width manually as the tooltip will ineffect the property : truncateText ',  */}
-          <EuiText className="eui-textTruncate" size="xs" style={{ maxWidth: 150 }}>
+          <EuiText className="eui-textTruncate" size="s" style={{ maxWidth: 150 }}>
             {description ? description : '\u2014'}
           </EuiText>
         </EuiToolTip>
       ),
-    },
-    {
-      field: 'permissionMode',
-      name: i18n.translate('workspace.list.columns.permissions.title', {
-        defaultMessage: 'Permissions',
-      }),
-      width: '6%',
-      render: (permissionMode: WorkspaceAttributeWithPermission['permissionMode']) => {
-        return isDashboardAdmin ? (
-          <EuiToolTip
-            position="right"
-            content={i18n.translate('workspace.role.admin.description', {
-              defaultMessage: 'You are dashboard admin',
-            })}
-          >
-            <EuiText size="xs">
-              {i18n.translate('workspace.role.admin.name', { defaultMessage: 'Admin' })}
-            </EuiText>
-          </EuiToolTip>
-        ) : (
-          startCase(permissionMode)
-        );
-      },
     },
     {
       field: 'lastUpdatedTime',
