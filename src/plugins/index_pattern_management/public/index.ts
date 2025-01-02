@@ -56,3 +56,4 @@ export {
 export { DefaultFormatEditor } from './components/field_editor/components/field_format_editor';
 
 export { MlCardState, IndexPatternTableColumn, IndexPatternTableRecord } from './types';
+export { getIndices } from './components/create_index_pattern_wizard/lib/get_indices';
