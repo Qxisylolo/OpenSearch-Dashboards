@@ -32,9 +32,13 @@ import { cloneDeep, defaultsDeep } from 'lodash';
 import { Observable, Subject, concat, defer, of } from 'rxjs';
 import { filter, map } from 'rxjs/operators';
 
-import { UserProvidedValues, PublicUiSettingsParams, UiSettingsType } from 'src/core/server/types';
+import {
+  UserProvidedValues,
+  PublicUiSettingsParams,
+  UiSettingsType,
+  UiSettingScope,
+} from 'src/core/server/types';
 import { IUiSettingsClient, UiSettingsState } from './types';
-
 import { UiSettingsApi } from './ui_settings_api';
 
 interface UiSettingsClientParams {
@@ -124,8 +128,8 @@ You can use \`IUiSettingsClient.get("${key}", defaultValue)\`, which will just r
     );
   }
 
-  async set(key: string, value: any) {
-    return await this.update(key, value);
+  async set(key: string, value: any, scope?: UiSettingScope) {
+    return await this.update(key, value, scope);
   }
 
   async remove(key: string) {
@@ -225,7 +229,7 @@ You can use \`IUiSettingsClient.get("${key}", defaultValue)\`, which will just r
     }
   }
 
-  private async update(key: string, newVal: any): Promise<boolean> {
+  private async update(key: string, newVal: any, scope?: UiSettingScope): Promise<boolean> {
     this.assertUpdateAllowed(key);
 
     const declared = this.isDeclared(key);
@@ -248,7 +252,7 @@ You can use \`IUiSettingsClient.get("${key}", defaultValue)\`, which will just r
       ) {
         const { settings } = this.cache[key]?.preferBrowserSetting
           ? this.setBrowserStoredSettings(key, newVal)
-          : (await this.api.batchSet(key, newVal)) || {};
+          : (await this.api.batchSet(key, newVal, scope)) || {};
         this.cache = defaultsDeep({}, defaults, this.getBrowserStoredSettings(), settings);
       } else {
         const { settings } = (await this.api.batchSet(key, newVal)) || {};

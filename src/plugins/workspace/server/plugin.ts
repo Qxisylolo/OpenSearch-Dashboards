@@ -44,6 +44,7 @@ import {
   initializeClientCallAuditor,
   updateWorkspaceState,
 } from '../../../core/server/utils';
+import { UiSettingScope } from '../../../core/server';
 import { WorkspaceConflictSavedObjectsClientWrapper } from './saved_objects/saved_objects_wrapper_for_check_workspace_conflict';
 import {
   SavedObjectsPermissionControl,

@@ -83,13 +83,13 @@ const UiSettingScopeReadOptions = [
     ignore404Errors: false,
   },
   {
-    scope: UiSettingScope.USER,
+    scope: UiSettingScope.WORKSPACE,
     ignore401Errors: true,
     autoCreateOrUpgradeIfMissing: false,
     ignore404Errors: true,
   },
   {
-    scope: UiSettingScope.WORKSPACE,
+    scope: UiSettingScope.USER,
     ignore401Errors: true,
     autoCreateOrUpgradeIfMissing: false,
     ignore404Errors: true,
@@ -107,6 +107,10 @@ export class UiSettingsClient implements IUiSettingsClient {
   private readonly userLevelSettingsKeys: string[] = [];
   private readonly workspaceLevelSettingsKeys: string[] = [];
   private readonly globalLevelSettingsKeys: string[] = [];
+  private readonly uiSettingsKeysWithMoreThanOneScope: string[] = [];
+  private readonly uiSettingsWithMoreThanOneScope: NonNullable<
+    UiSettingsServiceOptions['defaults']
+  > = {};
 
   constructor(options: UiSettingsServiceOptions) {
     const { type, id, buildNum, savedObjectsClient, log, defaults = {}, overrides = {} } = options;
@@ -154,34 +158,52 @@ export class UiSettingsClient implements IUiSettingsClient {
   }
 
   async getUserProvided<T = unknown>(scope?: UiSettingScope): Promise<UserProvided<T>> {
+    console.log(
+      'this.uiSettingsWithMoreThanOneScope[key] = { ...value }',
+      this.uiSettingsWithMoreThanOneScope
+    );
     let userProvided: UserProvided<T> = {};
     if (scope) {
       const readOptions = UiSettingScopeReadOptions.find((option) => option.scope === scope);
       userProvided = this.onReadHook<T>(await this.read(readOptions));
     } else {
       // default will get from all scope and merge
+      // but we will filter out settings with more than one scope
       // loop UiSettingScopeReadOptions
       for (const readOptions of UiSettingScopeReadOptions) {
-        if (readOptions.scope !== UiSettingScope.WORKSPACE) {
-          userProvided = {
-            ...userProvided,
-            ...this.onReadHook<T>(await this.read(readOptions)),
-          };
-        } else {
-          // in workspace scope
-          const response = await this.read(readOptions);
-          const copy = { ...userProvided };
-          if (response) {
-            for (const [key, value] of Object.entries(copy)) {
-              // If the key belongs to workspace scope, exists in userProvided and has value, set it to undefined first
-              if (this.workspaceLevelSettingsKeys.includes(key) && value !== null) {
-                copy[key].userValue = undefined;
-              }
-            }
+        // userProvided = { ...userProvided, ...this.onReadHook<T>(await this.read(readOptions)) };
+        const response = await this.read(readOptions);
+        const processedResponse = this.onReadHook<T>(response);
+        // // console.log('processedResponse', processedResponse);
+        const filteredResponse = Object.entries(processedResponse).reduce((acc, [key, value]) => {
+          if (!this.uiSettingsKeysWithMoreThanOneScope.includes(key)) {
+            acc[key] = value;
           }
+          return acc;
+        }, {} as UserProvided<T>);
 
-          userProvided = { ...copy, ...this.onReadHook<T>(response) };
-        }
+        // console.log('filteredResponse', filteredResponse);
+        userProvided = { ...userProvided, ...filteredResponse };
+        // userProvided = { ...userProvided, ...this.onReadHook<T>(await this.read(readOptions)) };
+        // if (readOptions.scope !== UiSettingScope.WORKSPACE) {
+        //   userProvided = {
+        //     ...userProvided,
+        //     ...this.onReadHook<T>(await this.read(readOptions)),
+        //   };
+        // } else {
+        //   // in workspace scope
+        //   const response = await this.read(readOptions);
+        //   const copy = { ...userProvided };
+        //   if (response) {
+        //     for (const [key, value] of Object.entries(copy)) {
+        //       // If the key belongs to workspace scope, exists in userProvided and has value, set it to undefined first
+        //       if (this.workspaceLevelSettingsKeys.includes(key) && value !== null) {
+        //         copy[key].userValue = undefined;
+        //       }
+        //     }
+        //   }
+        //   userProvided = { ...copy, ...this.onReadHook<T>(response) };
+        // }
       }
     }
     // write all overridden keys, dropping the userValue is override is null and
@@ -190,7 +212,6 @@ export class UiSettingsClient implements IUiSettingsClient {
       userProvided[key] =
         value === null ? { isOverridden: true } : { isOverridden: true, userValue: value };
     }
-
     return userProvided;
   }
 
@@ -200,15 +221,19 @@ export class UiSettingsClient implements IUiSettingsClient {
       await this.write({ changes, scope });
     } else {
       // group changes into different scope
-      const [global, personal, workspace] = this.groupChanges(changes);
-      if (global && Object.keys(global).length > 0) {
-        await this.write({ changes: global });
-      }
-      if (workspace && Object.keys(workspace).length > 0) {
-        await this.write({ changes: workspace, scope: UiSettingScope.WORKSPACE });
-      }
-      if (personal && Object.keys(personal).length > 0) {
-        await this.write({ changes: personal, scope: UiSettingScope.USER });
+      try {
+        const [global, personal, workspace] = this.groupChanges(changes);
+        if (global && Object.keys(global).length > 0) {
+          await this.write({ changes: global });
+        }
+        if (workspace && Object.keys(workspace).length > 0) {
+          await this.write({ changes: workspace, scope: UiSettingScope.WORKSPACE });
+        }
+        if (personal && Object.keys(personal).length > 0) {
+          await this.write({ changes: personal, scope: UiSettingScope.USER });
+        }
+      } catch (error) {
+        this.log.error('Failed to write settings changes');
       }
     }
   }
@@ -306,6 +331,10 @@ export class UiSettingsClient implements IUiSettingsClient {
 
   private groupSettingsKeys(defaults: NonNullable<UiSettingsServiceOptions['defaults']>) {
     Object.entries(defaults).forEach(([key, value]) => {
+      if (Array.isArray(value.scope) && (value.scope?.length ?? 0) > 1) {
+        this.uiSettingsKeysWithMoreThanOneScope.push(key);
+        this.uiSettingsWithMoreThanOneScope[key] = { ...value };
+      }
       if (
         value.scope === UiSettingScope.USER ||
         (Array.isArray(value.scope) && value.scope.includes(UiSettingScope.USER))
@@ -332,7 +361,10 @@ export class UiSettingsClient implements IUiSettingsClient {
     const workspaceChanges = {} as Record<string, any>;
 
     Object.entries(changes).forEach(([key, val]) => {
-      if (this.userLevelSettingsKeys.includes(key)) {
+      if (this.uiSettingsKeysWithMoreThanOneScope.includes(key)) {
+        // if this setting has more than one scope, then we will filter it out
+        return;
+      } else if (this.userLevelSettingsKeys.includes(key)) {
         userChanges[key] = val;
       } else if (this.workspaceLevelSettingsKeys.includes(key)) {
         workspaceChanges[key] = val;
@@ -388,6 +420,7 @@ export class UiSettingsClient implements IUiSettingsClient {
     try {
       const docId = buildDocIdWithScope(this.id, scope);
       const resp = await this.savedObjectsClient.get<Record<string, any>>(this.type, docId);
+      // console.log('resp', resp);
       return this.translateChanges(resp.attributes, 'timelion', 'timeline');
     } catch (error) {
       if (SavedObjectsErrorHelpers.isNotFoundError(error) && autoCreateOrUpgradeIfMissing) {

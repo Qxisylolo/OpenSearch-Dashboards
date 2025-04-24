@@ -105,6 +105,13 @@ export interface IUiSettingsClient {
   isOverridden: (key: string) => boolean;
 }
 
+// export interface ScopeCapability {
+//   /** Navigation link capabilities. */
+//   scope: UiSettingScope;
+// }
+
+// // export type ScopeCapabilitiesProvider = () => ScopeCapabilities;
+
 /** @internal */
 export interface InternalUiSettingsServiceSetup {
   /**
@@ -112,6 +119,7 @@ export interface InternalUiSettingsServiceSetup {
    * @param settings
    */
   register(settings: Record<string, UiSettingsParams>): void;
+  // registerScope(scope: ScopeCapability): void;
 }
 
 /** @public */
@@ -134,6 +142,7 @@ export interface UiSettingsServiceSetup {
    * ```
    */
   register(settings: Record<string, UiSettingsParams>): void;
+  // registerScope(provider: ScopeCapability): void;
 }
 
 /** @public */
