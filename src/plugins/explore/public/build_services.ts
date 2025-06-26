@@ -82,5 +82,6 @@ export function buildServices(
     tabRegistry,
     visualizationRegistry,
     expressions: plugins.expressions,
+    dashboard: plugins.dashboard,
   };
 }

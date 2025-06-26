@@ -24,6 +24,7 @@ import {
 import {
   LegacyState,
   setSavedSearch,
+  setSavedSearchName,
 } from '../../../../../utils/state_management/slices/legacy_slice';
 import {
   DOC_HIDE_TIME_COLUMN_SETTING,
@@ -176,7 +177,10 @@ export const getTopNavLinks = (
               }
 
               // set App state to clean
+              // dispatch setSavedSearchId and setSavedSearchName,
+              // this ensures that state consistency for top nav and add to dashboard button
               store!.dispatch(setSavedSearch(id));
+              store!.dispatch(setSavedSearchName(savedExplore.title));
 
               // starts syncing `_g` portion of url with query services
               startSyncingQueryStateWithUrl();

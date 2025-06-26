@@ -21,6 +21,7 @@ import {
   TimefilterContract,
 } from 'src/plugins/data/public';
 import { EmbeddableSetup, EmbeddableStart } from 'src/plugins/embeddable/public';
+import { DashboardSetup, DashboardStart } from 'src/plugins/dashboard/public';
 import { HomePublicPluginSetup } from 'src/plugins/home/public';
 import { Start as InspectorPublicPluginStart } from 'src/plugins/inspector/public';
 import {
@@ -87,6 +88,7 @@ export interface ExploreSetupDependencies {
   data: DataPublicPluginSetup;
   usageCollection: UsageCollectionSetup;
   expressions: ReturnType<ExpressionsPublicPlugin['setup']>;
+  dashboard: DashboardSetup;
 }
 
 /**
@@ -104,6 +106,7 @@ export interface ExploreStartDependencies {
   inspector: InspectorPublicPluginStart;
   visualizations: VisualizationsStart;
   expressions: ExpressionsStart;
+  dashboard: DashboardStart;
 }
 
 // ============================================================================
@@ -161,4 +164,5 @@ export interface ExploreServices {
   tabRegistry: TabRegistryService;
   visualizationRegistry: VisualizationRegistryService;
   expressions: ExpressionsStart;
+  dashboard: DashboardStart;
 }

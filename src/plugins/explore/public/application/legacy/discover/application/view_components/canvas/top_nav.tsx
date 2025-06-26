@@ -26,11 +26,12 @@ import { ResultStatus } from '../utils';
 import {
   selectSavedQuery,
   selectSavedSearch,
+  selectSavedSearchName,
+  selectUIState,
 } from '../../../../../utils/state_management/selectors';
 import { SavedExplore } from '../../../../../../saved_explore';
 import { ExecutionContextSearch } from '../../../../../../../../expressions/common/';
 import { saveStateToSavedObject } from '../../../../../../saved_explore/transforms';
-import { selectUIState } from '../../../../../utils/state_management/selectors';
 
 export interface TopNavProps {
   opts: {
@@ -61,6 +62,8 @@ export const TopNav = ({ opts, showSaveQuery, isEnhancementsEnabled }: TopNavPro
   const uiState = useNewStateSelector(selectUIState);
 
   const savedExploreId = useSelector(selectSavedSearch);
+  const savedExploreName = useSelector(selectSavedSearchName);
+
   const savedQueryId = useSelector(selectSavedQuery);
   const isLoading = useSelector((state: any) => state.ui.status === ResultStatus.LOADING);
 
@@ -105,7 +108,7 @@ export const TopNav = ({ opts, showSaveQuery, isEnhancementsEnabled }: TopNavPro
       setSavedExplore(savedObject);
     };
     loadSavedExplore();
-  }, [savedExploreId, getSavedExploreById]);
+  }, [savedExploreId, getSavedExploreById, savedExploreName]);
 
   // Create osdUrlStateStorage from storage
   const osdUrlStateStorage = useMemo(() => {

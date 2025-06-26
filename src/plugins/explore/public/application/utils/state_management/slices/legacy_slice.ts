@@ -14,6 +14,8 @@ export interface LegacyState {
   // Saved search ID (matches discover format - just string, not object)
   savedSearch?: string;
 
+  savedSearchName?: string;
+
   // Column configuration
   columns: string[];
 
@@ -41,6 +43,7 @@ const initialState: LegacyState = {
   savedQuery: undefined,
   isDirty: false,
   lineCount: undefined,
+  savedSearchName: undefined,
 };
 
 const legacySlice = createSlice({
@@ -49,6 +52,9 @@ const legacySlice = createSlice({
   reducers: {
     setSavedSearch: (state, action: PayloadAction<string | undefined>) => {
       state.savedSearch = action.payload;
+    },
+    setSavedSearchName: (state, action: PayloadAction<string | undefined>) => {
+      state.savedSearchName = action.payload;
     },
     setColumns: (state, action: PayloadAction<string[]>) => {
       state.columns = action.payload;
@@ -102,6 +108,7 @@ export const {
   setIsDirty,
   setLineCount,
   setState,
+  setSavedSearchName,
 } = legacySlice.actions;
 
 export const legacyReducer = legacySlice.reducer;
