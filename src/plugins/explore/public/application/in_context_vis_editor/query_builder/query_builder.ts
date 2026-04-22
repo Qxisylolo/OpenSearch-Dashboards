@@ -19,6 +19,8 @@ import { ISearchResult } from '../../../application/utils/state_management/slice
 import { ExploreServices } from '../../../types';
 import { prepareQueryForLanguage } from '../../../application/utils/languages';
 import { IVariableInterpolationService } from '../../../../../dashboard/public';
+import { createNoOpTransformationService } from '../data_transformations/transformation_service';
+import { ITransformationService } from '../data_transformations/types';
 
 import { Dataset, DEFAULT_DATA, DataView, Query } from '../../../../../data/common';
 import {
@@ -128,12 +130,20 @@ export class QueryBuilder {
   private subscriptions = Array<Subscription>();
   private getServices: () => ExploreServices;
   private interpolationService?: IVariableInterpolationService;
+  private transformationService: ITransformationService = createNoOpTransformationService();
+  private transformationSubscription?: Subscription;
   public lastExecutedInterpolatedQuery?: string;
+
+  /**
+   * Derived observable: resultState$ → applyPipeline → transformedResultState$
+   * Re-emits whenever raw results change OR the pipeline changes.
+   * VisualizationContainer subscribes to this instead of resultState$ directly.
+   */
+  public transformedResultState$ = new BehaviorSubject<QueryResultState>(undefined);
 
   constructor(getServices: () => ExploreServices) {
     this.getServices = getServices;
   }
-
   async init(options?: { savedQueryState?: QueryState }) {
     if (this.isInitialized) {
       return;
@@ -577,6 +587,38 @@ export class QueryBuilder {
     this.interpolationService = service;
   }
 
+  setTransformationService(service: TransformationService) {
+    this.transformationService = service;
+    // Rewire the derived stream whenever a new service is injected
+    this.setupTransformedResultState();
+  }
+
+  private setupTransformedResultState() {
+    // Unsubscribe from previous transformation subscription if it exists
+    if (this.transformationSubscription) {
+      this.transformationSubscription.unsubscribe();
+    }
+
+    // subscription that combines resultState and pipeline
+    this.transformationSubscription = combineLatest([
+      this.resultState$,
+      this.transformationService.pipeline$,
+    ])
+      .pipe(
+        map(([rawResult, _pipeline]) => {
+          if (!rawResult) return undefined;
+          const rawRows = rawResult.hits?.hits ?? [];
+          const transformedRows = this.transformationService.applyPipeline(rawRows);
+          return { ...rawResult, hits: { ...rawResult.hits, hits: transformedRows } };
+        })
+      )
+      .subscribe((transformedResult) => {
+        this.transformedResultState$.next(transformedResult);
+      });
+
+    this.subscriptions.push(this.transformationSubscription);
+  }
+
   setEditorRef(editor: monaco.editor.IStandaloneCodeEditor | null) {
     this.editorRef = editor;
   }
@@ -596,6 +638,7 @@ export class QueryBuilder {
     this.queryEditorState$.complete();
     this.queryState$.complete();
     this.resultState$.complete();
+    this.transformedResultState$.complete();
     this.datasetView$.complete();
     abortAllActiveQueries();
   }
@@ -610,6 +653,7 @@ export class QueryBuilder {
 
     this.queryEditorState$ = new BehaviorSubject<QueryEditorState>(initialQueryEditorState);
     this.resultState$ = new BehaviorSubject<QueryResultState>(undefined);
+    this.transformedResultState$ = new BehaviorSubject<QueryResultState>(undefined);
     this.datasetView$ = new BehaviorSubject<DatasetViewState>({
       dataView: undefined,
       isLoading: false,
