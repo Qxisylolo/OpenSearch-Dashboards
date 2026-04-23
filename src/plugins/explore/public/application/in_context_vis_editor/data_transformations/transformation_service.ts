@@ -22,7 +22,7 @@ import {
 import { OpenSearchSearchHit } from '../../../types/doc_views_types';
 import { TRANSFORMATION_STATE_KEY } from '../types';
 
-interface UrlTransformationState {
+export interface UrlTransformationState {
   definitionId: string; // defination identifier
   instanceId: string; // unique instance identifier
   config: any;

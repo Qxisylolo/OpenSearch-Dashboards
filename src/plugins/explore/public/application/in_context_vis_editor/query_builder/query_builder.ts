@@ -40,7 +40,11 @@ import {
   handleAgentError,
 } from './utils';
 import { getServices as getExploreServices } from '../../../services/services';
-import { QUERY_BUILDER_QUERY_STATE_KEY, QUERY_EDITOR_STATE_KEY } from '../types';
+import {
+  QUERY_BUILDER_QUERY_STATE_KEY,
+  QUERY_EDITOR_STATE_KEY,
+  ActiveBottomPanelTab,
+} from '../types';
 
 // AbortControllers for active queries, keyed by query string
 // Currently only one query executing at a time
@@ -78,6 +82,7 @@ export interface QueryEditorState {
   userInitiatedQuery: boolean;
   languageType: SupportLanguageType;
   lastExecutedTranslatedQuery?: string; // last generated query
+  activeBottomPanelTab?: ActiveBottomPanelTab; // track which panel tab is active
 }
 
 export type QueryResultState = ISearchResult | undefined;
@@ -105,6 +110,7 @@ const initialQueryEditorState: QueryEditorState = {
   userInitiatedQuery: false, // user click the refresh button
   languageType: SupportLanguageType.ppl,
   lastExecutedTranslatedQuery: undefined,
+  activeBottomPanelTab: 'QUERY_TAB',
 };
 
 /**
@@ -210,10 +216,21 @@ export class QueryBuilder {
     this.setupGlobalDataRangeSync();
     this.setupQuerySync();
     this.setupLanguageSync();
+    this.consoleResults();
     // start sync until dataview is ready
     await this.waitForDatasetReady();
     this.startUrlSync();
     this.setIsInitialized(true);
+  }
+
+  consoleResults() {
+    const sub = combineLatest([this.resultState$, this.queryState$]).subscribe(
+      ([result, queryState]) => {
+        console.log('Query:', queryState.query);
+        console.log('Result:', result);
+      }
+    );
+    this.subscriptions.push(sub);
   }
 
   startUrlSync() {
@@ -587,7 +604,7 @@ export class QueryBuilder {
     this.interpolationService = service;
   }
 
-  setTransformationService(service: TransformationService) {
+  setTransformationService(service: ITransformationService) {
     this.transformationService = service;
     // Rewire the derived stream whenever a new service is injected
     this.setupTransformedResultState();
@@ -605,7 +622,8 @@ export class QueryBuilder {
       this.transformationService.pipeline$,
     ])
       .pipe(
-        map(([rawResult, _pipeline]) => {
+        map(([rawResult]) => {
+          console.log('trigger applyPipeline');
           if (!rawResult) return undefined;
           const rawRows = rawResult.hits?.hits ?? [];
           const transformedRows = this.transformationService.applyPipeline(rawRows);

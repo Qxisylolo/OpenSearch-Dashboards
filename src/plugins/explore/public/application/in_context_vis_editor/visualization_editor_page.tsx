@@ -29,6 +29,7 @@ import { VISUALIZATION_EDITOR_APP_ID } from '../../../common';
 import { getBreadcrumbs } from './utils';
 import { useInitialContainerContext } from './hooks/use_initial_container_context';
 import { useVariables } from './hooks/use_variables';
+import { cleanupGlobalTransformationService } from './hooks/use_transformation_service';
 
 export const VisualizationEditorPage = ({
   setHeaderActionMenu,
@@ -63,6 +64,7 @@ export const VisualizationEditorPage = ({
     savedQueryState,
     savedVisConfig,
     error,
+    savedTransformationPipeline,
     isLoading,
   } = useInitialSaveExplore();
 
@@ -139,6 +141,7 @@ export const VisualizationEditorPage = ({
     return () => {
       queryBuilder.reset();
       visualizationBuilderForEditor.reset();
+      cleanupGlobalTransformationService();
     };
   }, [queryBuilder, visualizationBuilderForEditor]);
 
@@ -172,7 +175,9 @@ export const VisualizationEditorPage = ({
                       {variableService && VariablesBar && (
                         <VariablesBar variableService={variableService} />
                       )}
-                      <ResizableQueryPanelAndVisualization />
+                      <ResizableQueryPanelAndVisualization
+                        savedTransformationPipeline={savedTransformationPipeline}
+                      />
                     </EuiResizablePanel>
                     <EuiResizableButton />
                     <EuiResizablePanel

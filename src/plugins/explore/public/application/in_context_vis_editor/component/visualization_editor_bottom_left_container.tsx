@@ -52,12 +52,27 @@ const transformTabLabel = i18n.translate('explore.bottomPanel.transformTab', {
   defaultMessage: 'Transform',
 });
 
-export const ResizableQueryPanelAndVisualization = () => {
+interface ResizableQueryPanelAndVisualizationProps {
+  savedTransformationPipeline?: Array<{
+    definitionId: string;
+    instanceId: string;
+    config: any;
+    hide: boolean;
+  }>;
+}
+
+export const ResizableQueryPanelAndVisualization = ({
+  savedTransformationPipeline,
+}: ResizableQueryPanelAndVisualizationProps) => {
   const { queryBuilder, queryEditorState } = useQueryBuilderState();
   const queryStatus = queryEditorState.queryStatus;
   const [activeTab, setActiveTab] = useState<ActiveTab>('TRANSFORM_TAB');
 
-  const transformServices = useTransformationService();
+  const transformServices = useTransformationService(savedTransformationPipeline);
+
+  useEffect(() => {
+    queryBuilder.updateQueryEditorState({ activeBottomPanelTab: activeTab });
+  }, [activeTab, queryBuilder]);
 
   const renderVis = () => {
     if (queryStatus.status === QueryExecutionStatus.NO_RESULTS) {

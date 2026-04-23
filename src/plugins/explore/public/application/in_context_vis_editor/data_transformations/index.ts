@@ -3,8 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type { TransformationInstance, TransformationPipeline } from './types';
-export type { TransformationDefinition, ITransformationService } from './transformation_service';
+export type {
+  TransformationInstance,
+  TransformationPipeline,
+  TransformationDefinition,
+  ITransformationService,
+} from './types';
+export type { UrlTransformationState } from './transformation_service';
 export { TransformationService, createNoOpTransformationService } from './transformation_service';
 export {
   addTransformation,
@@ -18,4 +23,8 @@ export {
 export {
   createSortByTransformation,
   sortByTransformationDefinition,
-} from './transformations/sortBy_transformation';
+} from './transformations/sortby_transformation';
+export {
+  createFilterTransformation,
+  filterTransformationDefinition,
+} from './transformations/filter_transformation';

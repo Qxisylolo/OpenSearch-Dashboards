@@ -59,6 +59,12 @@ import { normalizeResultRows } from '../components/visualizations/utils/normaliz
 import { visualizationRegistry } from '../components/visualizations/visualization_registry';
 import { prepareQueryForLanguage } from '../application/utils/languages';
 import { mergeStyles } from '../components/visualizations/utils/utils';
+import {
+  TransformationService,
+  limitTransformationDefinition,
+  sortByTransformationDefinition,
+  UrlTransformationState,
+} from '../application/in_context_vis_editor/data_transformations';
 
 // TODO cleanup unused props
 export interface SearchProps {
@@ -133,6 +139,9 @@ export class ExploreEmbeddable
   public originalQuery?: string;
   private lastInterpolatedQuery?: string;
 
+  // Data transformation support
+  private transformationService: TransformationService;
+
   constructor(
     {
       savedExplore,
@@ -169,6 +178,12 @@ export class ExploreEmbeddable
       data: new DataAdapter(),
     };
 
+    // Initialize transformation service
+    this.transformationService = new TransformationService();
+    this.transformationService.registerDefinition(limitTransformationDefinition);
+    this.transformationService.registerDefinition(sortByTransformationDefinition);
+    this.initializeTransformationPipeline();
+
     // Initialize variable support BEFORE search props so the interpolation
     // service is available for the initial query setup.
     this.initializeVariableSubscription(parent);
@@ -187,6 +202,51 @@ export class ExploreEmbeddable
           this.updateHandler(this.searchProps, true);
         }
       });
+  }
+
+  // initialize transformation pipeline from saved explore
+  private initializeTransformationPipeline() {
+    if (!this.savedExplore.dataTransformationJSON) {
+      return;
+    }
+
+    try {
+      const savedPipeline: UrlTransformationState[] = JSON.parse(
+        this.savedExplore.dataTransformationJSON
+      );
+
+      if (!savedPipeline || !Array.isArray(savedPipeline) || savedPipeline.length === 0) {
+        return;
+      }
+
+      const restoredPipeline = savedPipeline
+        .map((item) => {
+          const definition = this.transformationService.getDefinition(item.definitionId);
+          if (!definition) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `ExploreEmbeddable: transformation definition "${item.definitionId}" not found, skipping`
+            );
+            return null;
+          }
+
+          const instance = definition.createInstance();
+          return {
+            ...instance,
+            instance_id: item.instanceId,
+            config: item.config,
+            hide: item.hide,
+          };
+        })
+        .filter((item) => item !== null);
+
+      if (restoredPipeline.length > 0) {
+        this.transformationService.setPipeline(restoredPipeline as any);
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('ExploreEmbeddable: failed to restore transformation pipeline', error);
+    }
   }
 
   /**
@@ -464,9 +524,10 @@ export class ExploreEmbeddable
           formatter: languageConfig.fields.formatter,
         }),
     });
-    const rows = resp.hits.hits;
+    const rawRows = resp.hits.hits;
+    const transformedRows = this.transformationService.applyPipeline(rawRows);
     const fieldSchema = searchSource.getDataFrame()?.schema;
-    const visualizationData = normalizeResultRows(rows, fieldSchema ?? []);
+    const visualizationData = normalizeResultRows(transformedRows, fieldSchema ?? []);
 
     // TODO: Confirm if tab is in visualization but visualization is null, what to display?
     // const displayVis = rows?.length > 0 && visualizationData && visualizationData.ruleId;
@@ -553,9 +614,9 @@ export class ExploreEmbeddable
     }
     this.updateOutput({ loading: false, error: undefined });
     inspectorRequest.stats(getResponseInspectorStats(resp, searchSource)).ok({ json: resp });
-    this.searchProps.rows = rows;
+    this.searchProps.rows = transformedRows;
     // NOTE: PPL response is not the same as OpenSearch response, resp.hits.total here is 0.
-    this.searchProps.hits = resp.hits.hits.length;
+    this.searchProps.hits = transformedRows.length;
     this.searchProps.isLoading = false;
 
     // set tabular for DataViewComponent to display via adapters.data.getTabular()
@@ -613,6 +674,11 @@ export class ExploreEmbeddable
     // Cleanup variable subscription
     if (this.variableSubscription) {
       this.variableSubscription.unsubscribe();
+    }
+
+    // Cleanup transformation service
+    if (this.transformationService) {
+      this.transformationService.destroy();
     }
 
     if (this.abortController) {

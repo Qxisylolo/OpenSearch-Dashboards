@@ -70,13 +70,24 @@ export const TopNav = ({ setHeaderActionMenu = () => {}, savedExplore }: TopNavP
       if (payload?.dateRange) {
         queryBuilder.updateQueryEditorState({ dateRange: payload.dateRange });
       }
-      // update current query text
-      if (queryEditorState.editorMode !== EditorMode.Prompt) {
+      // update current query text only if on Query tab and not in Prompt mode
+      // Only read from editor if Query tab is active (editor is mounted)
+      // when Transform tab is active, then use the existing query
+      if (
+        queryEditorState.editorMode !== EditorMode.Prompt &&
+        queryEditorState.activeBottomPanelTab === 'QUERY_TAB'
+      ) {
         queryBuilder.updateQueryState({ query: getEditorText() });
+        // Otherwise, keep existing query in queryState$ (important for Transform tab)
       }
       await queryBuilder.onQueryExecutionSubmit();
     },
-    [queryBuilder, queryEditorState.editorMode, getEditorText]
+    [
+      queryBuilder,
+      queryEditorState.editorMode,
+      queryEditorState.activeBottomPanelTab,
+      getEditorText,
+    ]
   );
 
   const handleQueryCancel = useCallback(() => {

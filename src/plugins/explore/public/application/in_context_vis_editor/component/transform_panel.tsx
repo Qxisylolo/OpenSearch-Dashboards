@@ -22,6 +22,7 @@ import {
 import { i18n } from '@osd/i18n';
 import { TransformSelectorButton } from './transform_selector_overlay';
 import { TransformationInstance, TransformationService } from '../data_transformations';
+import { useQueryBuilderState } from '../hooks/use_query_builder_state';
 
 const DROPPABLE_ID = 'transformationPipelineDroppable';
 
@@ -34,6 +35,16 @@ export const TransformPanel = ({
     transformationService.pipeline$,
     transformationService.pipeline$.getValue()
   );
+
+  const { queryBuilder } = useQueryBuilderState();
+  const resultState = useObservable(
+    queryBuilder.resultState$,
+    queryBuilder.resultState$.getValue()
+  );
+
+  // Extract available field names from fieldSchema
+  const availableFields: string[] =
+    resultState?.fieldSchema?.map((field: any) => field.name || field.field || field) || [];
 
   const onSelectTransformation = (id: string) => {
     transformationService.addInstance(id);
@@ -102,6 +113,7 @@ export const TransformPanel = ({
                       onConfigChange={onConfigChange}
                       onToggleHide={onToggleHide}
                       dragHandleProps={provided.dragHandleProps}
+                      availableFields={availableFields}
                     />
                   )}
                 </EuiDraggable>
@@ -127,6 +139,7 @@ interface TransformationCardProps {
   onConfigChange: (id: string, newConfig: any) => void;
   onToggleHide: (id: string) => void;
   dragHandleProps: Record<string, any> | null | undefined;
+  availableFields: string[];
 }
 
 const TransformationCard = ({
@@ -136,6 +149,7 @@ const TransformationCard = ({
   onConfigChange,
   onToggleHide,
   dragHandleProps,
+  availableFields,
 }: TransformationCardProps) => {
   const { Editor } = instance;
 
@@ -199,7 +213,7 @@ const TransformationCard = ({
         <Editor
           config={instance.config}
           onChange={(newConfig) => onConfigChange(instance.instance_id, newConfig)}
-          availableFields={[]}
+          availableFields={availableFields}
         />
       </EuiAccordion>
     </EuiPanel>
