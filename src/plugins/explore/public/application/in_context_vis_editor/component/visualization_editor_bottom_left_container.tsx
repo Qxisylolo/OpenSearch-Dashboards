@@ -129,7 +129,7 @@ export const ResizableQueryPanelAndVisualization = ({
       {(EuiResizablePanel, EuiResizableButton) => {
         return (
           <>
-            <EuiResizablePanel initialSize={70} minSize="60%" paddingSize="none">
+            <EuiResizablePanel initialSize={70} minSize="0%" paddingSize="none">
               {renderVis()}
             </EuiResizablePanel>
 
@@ -188,7 +188,7 @@ export const VisualizationContainer = () => {
     if (transformedResult) {
       const rows = transformedResult.hits?.hits || [];
       const fieldSchema = transformedResult.fieldSchema || [];
-
+      console.log('rows fieldSchema', rows, fieldSchema);
       visualizationBuilder.handleData(rows, fieldSchema);
     }
   }, [visualizationBuilder, transformedResult]);

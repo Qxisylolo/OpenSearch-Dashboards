@@ -8,6 +8,11 @@ import { TransformationService } from '../data_transformations/transformation_se
 import { limitTransformationDefinition } from '../data_transformations/transformations/limit_transformation';
 import { sortByTransformationDefinition } from '../data_transformations/transformations/sortby_transformation';
 import { filterTransformationDefinition } from '../data_transformations/transformations/filter_transformation';
+import { addFieldTransformationDefinition } from '../data_transformations/transformations/add_field_transformation';
+import { filterFieldsTransformationDefinition } from '../data_transformations/transformations/filter_fields_transformation';
+import { convertFieldTypeTransformationDefinition } from '../data_transformations/transformations/convert_field_type_transformation';
+import { reduceTransformationDefinition } from '../data_transformations/transformations/reduce_transformation';
+import { groupByTransformationDefinition } from '../data_transformations/transformations/group_by_transformation';
 import { useQueryBuilderState } from './use_query_builder_state';
 import { getServices } from '../../../services/services';
 import { UrlTransformationState } from '../data_transformations';
@@ -35,6 +40,11 @@ export const useTransformationService = (
     service.registerDefinition(limitTransformationDefinition);
     service.registerDefinition(sortByTransformationDefinition);
     service.registerDefinition(filterTransformationDefinition);
+    service.registerDefinition(addFieldTransformationDefinition);
+    service.registerDefinition(filterFieldsTransformationDefinition);
+    // service.registerDefinition(convertFieldTypeTransformationDefinition);
+    // service.registerDefinition(reduceTransformationDefinition);
+    service.registerDefinition(groupByTransformationDefinition);
 
     globalTransformationService = service;
 
@@ -59,8 +69,6 @@ export const useTransformationService = (
   useEffect(() => {
     if (!transformationService) return;
 
-    let hasRestored = false;
-
     // Restore savedTransformationPipeline (only if provided)
     if (savedTransformationPipeline && savedTransformationPipeline.length > 0) {
       const restoredPipeline: any[] = [];
@@ -78,7 +86,6 @@ export const useTransformationService = (
       }
       if (restoredPipeline.length > 0) {
         transformationService.setPipeline(restoredPipeline);
-        hasRestored = true;
       }
     }
 
@@ -87,7 +94,7 @@ export const useTransformationService = (
     if (osdUrlStateStorage) {
       transformationService.initUrlSync(osdUrlStateStorage);
     }
-  }, []);
+  }, [savedTransformationPipeline, transformationService]);
 
   // useEffect(() => {
   //   return () => {

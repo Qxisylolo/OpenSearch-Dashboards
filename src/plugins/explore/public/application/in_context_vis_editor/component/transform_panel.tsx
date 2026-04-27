@@ -21,8 +21,14 @@ import {
 } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import { TransformSelectorButton } from './transform_selector_overlay';
-import { TransformationInstance, TransformationService } from '../data_transformations';
+import {
+  TransformationInstance,
+  TransformationService,
+  FieldSchema,
+} from '../data_transformations';
 import { useQueryBuilderState } from '../hooks/use_query_builder_state';
+import { FIELD_TYPE_MAP } from '../../../components/visualizations/constants';
+import { VisFieldType } from '../../../components/visualizations/types';
 
 const DROPPABLE_ID = 'transformationPipelineDroppable';
 
@@ -37,14 +43,20 @@ export const TransformPanel = ({
   );
 
   const { queryBuilder } = useQueryBuilderState();
-  const resultState = useObservable(
-    queryBuilder.resultState$,
-    queryBuilder.resultState$.getValue()
+  const stageSchemas = useObservable(
+    queryBuilder.stageSchemas$,
+    queryBuilder.stageSchemas$.getValue()
   );
 
-  // Extract available field names from fieldSchema
-  const availableFields: string[] =
-    resultState?.fieldSchema?.map((field: any) => field.name || field.field || field) || [];
+  console.log('stageSchemas', stageSchemas);
+
+  const getAvailableFieldsForIndex = (index: number): FieldSchema[] => {
+    const raw = stageSchemas[index] ?? [];
+    return raw.map((field) => ({
+      name: field.name || '',
+      visFieldType: FIELD_TYPE_MAP[field.type || ''] || VisFieldType.Unknown,
+    }));
+  };
 
   const onSelectTransformation = (id: string) => {
     transformationService.addInstance(id);
@@ -65,7 +77,9 @@ export const TransformPanel = ({
   const onDragEnd = ({ source, destination }: any) => {
     if (!source || !destination) return;
     const reordered = euiDragDropReorder(pipeline, source.index, destination.index);
-    transformationService.setPipeline(reordered);
+    const rawRows = queryBuilder.resultState$.getValue()?.hits?.hits ?? [];
+    const originalSchema = queryBuilder.resultState$.getValue()?.fieldSchema ?? [];
+    transformationService.reorderPipeline(reordered, rawRows, originalSchema);
   };
 
   return (
@@ -113,7 +127,7 @@ export const TransformPanel = ({
                       onConfigChange={onConfigChange}
                       onToggleHide={onToggleHide}
                       dragHandleProps={provided.dragHandleProps}
-                      availableFields={availableFields}
+                      availableFields={getAvailableFieldsForIndex(index)}
                     />
                   )}
                 </EuiDraggable>
@@ -139,7 +153,7 @@ interface TransformationCardProps {
   onConfigChange: (id: string, newConfig: any) => void;
   onToggleHide: (id: string) => void;
   dragHandleProps: Record<string, any> | null | undefined;
-  availableFields: string[];
+  availableFields: FieldSchema[];
 }
 
 const TransformationCard = ({

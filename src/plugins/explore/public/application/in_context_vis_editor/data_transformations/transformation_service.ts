@@ -18,6 +18,7 @@ import {
   removeTransformation,
   updateTransformationConfig,
   toggleTransformationHide,
+  deriveSchemaFromRows,
 } from './registry_utils';
 import { OpenSearchSearchHit } from '../../../types/doc_views_types';
 import { TRANSFORMATION_STATE_KEY } from '../types';
@@ -60,10 +61,11 @@ export class TransformationService implements ITransformationService {
   }
 
   init() {
-    this.consolePipe();
+    // this.consolePipe();
   }
   consolePipe() {
     this.pipeline$.subscribe((pipe) => {
+      // eslint-disable-next-line no-console
       console.log('current pipe', pipe);
     });
   }
@@ -105,44 +107,86 @@ export class TransformationService implements ITransformationService {
     this.pipeline$.next(instances);
   }
 
+  /**
+   * Reorder the pipeline and reset configs of moved instances.
+   * Any field references that are no longer available at the new position are cleared.
+   */
+  reorderPipeline(
+    reorderedPipeline: TransformationPipeline,
+    rawRows: any[],
+    originalSchema: Array<{ name?: string; type?: string }>
+  ): void {
+    // Run the pipeline step by step to know available fields at each position
+    let rows = [...rawRows];
+    let currentSchema = originalSchema;
+
+    const reorderedPipe = reorderedPipeline.map((instance) => {
+      const availableNames = new Set(currentSchema.map((f) => f.name ?? ''));
+
+      // reset config against currently available fields
+      const cleanConfig = instance.resetConfig
+        ? instance.resetConfig(instance.config, availableNames)
+        : instance.config;
+
+      const resetInstance = { ...instance, config: cleanConfig };
+
+      try {
+        rows = resetInstance.transformationMethod(rows, cleanConfig);
+        currentSchema = deriveSchemaFromRows(rows, originalSchema);
+      } catch {
+        // keep currentSchema unchanged
+      }
+
+      return resetInstance;
+    });
+
+    this.pipeline$.next(reorderedPipe);
+  }
+
   clearPipeline(): void {
     this.pipeline$.next([]);
   }
 
   /**
-   * Apply the current pipeline to a response hits
-   * - Returns rawRows unchanged when pipeline is empty (identity).
-   * - Returns [] when rawRows is null/undefined.
-   * - Skips (and logs) any step whose transformationMethod throws.
+   * Apply the full pipeline in a single pass, collecting per-stage schemas.
+   * Returns:
+   * rows: final transformed rows
+   * stageSchemas: stageSchemas[i] = schema available as input to step i
    */
-  applyPipeline(rawRows: OpenSearchSearchHit[]): any[] {
-    if (!rawRows) return [];
-
+  applyPipeline(
+    rawRows: OpenSearchSearchHit[],
+    originalSchema: Array<{ name?: string; type?: string }> = []
+  ): { rows: OpenSearchSearchHit[]; stageSchemas: Array<Array<{ name?: string; type?: string }>> } {
     const registry = this.pipeline$.getValue();
-    if (registry.length === 0) return rawRows;
+    const stageSchemas: Array<Array<{ name?: string; type?: string }>> = [];
+
+    if (registry.length === 0) return { rows: rawRows, stageSchemas: [originalSchema] };
 
     let rows = [...rawRows];
+    let currentSchema: Array<{ name?: string; type?: string }> = [...originalSchema];
+
     for (const instance of registry) {
+      // ensure stageSchemas[i] aligns with pipeline[i]
+      stageSchemas.push(currentSchema);
+
       if (instance.hide) continue;
+
       try {
-        const result = instance.transformationMethod(rows, instance.config);
-        if (result == null) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            `TransformationService: step "(${instance.instance_id}) returned null/undefined — skipping`
-          );
-          continue;
-        }
-        rows = result;
+        rows = instance.transformationMethod(rows, instance.config);
+        currentSchema = deriveSchemaFromRows(rows, originalSchema);
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(
-          `TransformationService: step "(${instance.instance_id}) threw — skipping`,
+          `TransformationService: step "${instance.instance_id}" threw — skipping`,
           err
         );
       }
     }
-    return rows;
+
+    // Push final schema, return output of last step
+    stageSchemas.push(currentSchema);
+
+    return { rows, stageSchemas };
   }
 
   /**
@@ -198,7 +242,6 @@ export class TransformationService implements ITransformationService {
       }
 
       if (restoredPipeline.length > 0) {
-        console.log('restoredPipeline', restoredPipeline);
         this.pipeline$.next(restoredPipeline);
       }
     } catch (err) {
@@ -265,7 +308,7 @@ export const createNoOpTransformationService = (): ITransformationService => ({
   toggleInstanceHide: () => {},
   setPipeline: () => {},
   clearPipeline: () => {},
-  applyPipeline: (rawRows: any[]) => rawRows ?? [],
+  applyPipeline: (rawRows: any[]) => ({ rows: rawRows ?? [], stageSchemas: [] }),
   initUrlSync: () => {},
   destroy: () => {},
 });

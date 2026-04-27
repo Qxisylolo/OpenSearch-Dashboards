@@ -64,6 +64,7 @@ import {
   limitTransformationDefinition,
   sortByTransformationDefinition,
   UrlTransformationState,
+  filterTransformationDefinition,
 } from '../application/in_context_vis_editor/data_transformations';
 
 // TODO cleanup unused props
@@ -182,6 +183,7 @@ export class ExploreEmbeddable
     this.transformationService = new TransformationService();
     this.transformationService.registerDefinition(limitTransformationDefinition);
     this.transformationService.registerDefinition(sortByTransformationDefinition);
+    this.transformationService.registerDefinition(filterTransformationDefinition);
     this.initializeTransformationPipeline();
 
     // Initialize variable support BEFORE search props so the interpolation

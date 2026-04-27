@@ -3,11 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { useState } from 'react';
 import uuid from 'uuid';
-import { EuiFormRow, EuiSelect, EuiFlexGroup, EuiFlexItem } from '@elastic/eui';
+import { EuiFormRow, EuiButtonGroup, EuiFlexGroup, EuiFlexItem } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import { get } from 'lodash';
-import { TransformationInstance, TransformationDefinition } from '../types';
+import { TransformationInstance, TransformationDefinition, FieldSchema } from '../types';
+import { FieldSelector } from '../field_selector';
 
 interface SortByConfig {
   field: string | undefined;
@@ -21,28 +23,22 @@ const SortByEditor = ({
 }: {
   config: SortByConfig;
   onChange: (newConfig: SortByConfig) => void;
-  availableFields: string[];
+  availableFields: FieldSchema[];
 }) => {
-  const fieldOptions = [
-    {
-      value: '',
-      text: i18n.translate('explore.transformations.sortBy.selectFieldPlaceholder', {
-        defaultMessage: '-- Select field --',
-      }),
-    },
-    ...availableFields.map((field) => ({ value: field, text: field })),
-  ];
+  const handleFieldChange = (fieldSchema: FieldSchema | undefined) => {
+    onChange({ ...config, field: fieldSchema?.name || undefined });
+  };
 
   const orderOptions = [
     {
-      value: 'asc',
-      text: i18n.translate('explore.transformations.sortBy.ascending', {
+      id: 'asc',
+      label: i18n.translate('explore.transformations.sortBy.ascending', {
         defaultMessage: 'Ascending',
       }),
     },
     {
-      value: 'desc',
-      text: i18n.translate('explore.transformations.sortBy.descending', {
+      id: 'desc',
+      label: i18n.translate('explore.transformations.sortBy.descending', {
         defaultMessage: 'Descending',
       }),
     },
@@ -51,22 +47,12 @@ const SortByEditor = ({
   return (
     <EuiFlexGroup direction="column" gutterSize="s">
       <EuiFlexItem>
-        <EuiFormRow
-          label={i18n.translate('explore.transformations.sortBy.fieldLabel', {
-            defaultMessage: 'Field',
-          })}
-          display="columnCompressed"
-        >
-          <EuiSelect
-            compressed
-            options={fieldOptions}
-            value={config.field || ''}
-            onChange={(e) => {
-              onChange({ ...config, field: e.target.value || undefined });
-            }}
-            data-test-subj="sortByFieldSelect"
-          />
-        </EuiFormRow>
+        <FieldSelector
+          configField={config.field}
+          availableFields={availableFields}
+          updateConfigField={handleFieldChange}
+          testSubjPrefix="sortBy"
+        />
       </EuiFlexItem>
       <EuiFlexItem>
         <EuiFormRow
@@ -75,14 +61,18 @@ const SortByEditor = ({
           })}
           display="columnCompressed"
         >
-          <EuiSelect
-            compressed
+          <EuiButtonGroup
+            legend={i18n.translate('explore.transformations.sortBy.orderLegend', {
+              defaultMessage: 'Sort order',
+            })}
             options={orderOptions}
-            value={config.order}
-            onChange={(e) => {
-              onChange({ ...config, order: e.target.value as 'asc' | 'desc' });
+            idSelected={config.order}
+            onChange={(id) => {
+              onChange({ ...config, order: id as 'asc' | 'desc' });
             }}
-            data-test-subj="sortByOrderSelect"
+            buttonSize="compressed"
+            isFullWidth
+            data-test-subj="sortByOrderButtonGroup"
           />
         </EuiFormRow>
       </EuiFlexItem>
@@ -102,16 +92,14 @@ export function createSortByTransformation(): TransformationInstance {
     transformationMethod: (data: any[], config: any) => {
       const { field, order } = config as SortByConfig;
 
-      // Return original data if no field is selected
       if (!field) {
         return data;
       }
 
-      // Create a copy to avoid mutating original array
       const sorted = [...data];
 
       sorted.sort((a, b) => {
-        // Extract values from OpenSearch hit structure (_source.field)
+        // extract values from OpenSearch hit (_source.field)
         const valueA = get(a, `_source.${field}`);
         const valueB = get(b, `_source.${field}`);
 
@@ -131,11 +119,17 @@ export function createSortByTransformation(): TransformationInstance {
           comparison = String(valueA).localeCompare(String(valueB));
         }
 
-        // Apply order direction
         return order === 'asc' ? comparison : -comparison;
       });
 
       return sorted;
+    },
+    resetConfig: (config: SortByConfig, availableFieldNames: Set<string>) => {
+      const c = { ...config };
+      if (c.field && !availableFieldNames.has(c.field)) {
+        return { ...c, field: undefined, value: '' };
+      }
+      return c;
     },
     Editor: SortByEditor,
   };

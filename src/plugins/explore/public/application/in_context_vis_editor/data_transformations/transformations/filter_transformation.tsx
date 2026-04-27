@@ -3,17 +3,26 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { useCallback } from 'react';
 import uuid from 'uuid';
 import { EuiFormRow, EuiSelect, EuiFieldText, EuiFlexGroup, EuiFlexItem } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import { get } from 'lodash';
-import { TransformationInstance, TransformationDefinition } from '../types';
+import {
+  TransformationInstance,
+  TransformationDefinition,
+  FieldSchema,
+  dateOperatorOptions,
+  FilterConfig,
+  numericalOperatorOptions,
+  allOperatorOptions,
+} from '../types';
+import { VisFieldType } from '../../../../components/visualizations/types';
+import { FieldSelector } from '../field_selector';
 
-interface FilterConfig {
-  field: string | undefined;
-  operator: 'equals' | 'not_equals' | 'contains' | 'not_contains' | 'greater_than' | 'less_than';
-  value: string;
-}
+const isConfigComplete = (config: FilterConfig): boolean => {
+  return !!config.field && !!config.operator && config.value.trim() !== '';
+};
 
 const FilterEditor = ({
   config,
@@ -22,76 +31,78 @@ const FilterEditor = ({
 }: {
   config: FilterConfig;
   onChange: (newConfig: FilterConfig) => void;
-  availableFields: string[];
+  availableFields: FieldSchema[];
 }) => {
-  const fieldOptions = [
-    {
-      value: '',
-      text: i18n.translate('explore.transformations.filter.selectFieldPlaceholder', {
-        defaultMessage: '-- Select field --',
-      }),
-    },
-    ...availableFields.map((field) => ({ value: field, text: field })),
-  ];
+  // Find the selected field's type
+  const selectedField = availableFields.find((field) => field.name === config.field);
+  const fieldType = selectedField?.visFieldType;
 
-  const operatorOptions = [
-    {
-      value: 'equals',
-      text: i18n.translate('explore.transformations.filter.equals', {
-        defaultMessage: 'Equals',
-      }),
+  const updateConfig = useCallback(
+    (newConfig: FilterConfig) => {
+      onChange(newConfig);
     },
-    {
-      value: 'not_equals',
-      text: i18n.translate('explore.transformations.filter.notEquals', {
-        defaultMessage: 'Not equals',
-      }),
-    },
-    {
-      value: 'contains',
-      text: i18n.translate('explore.transformations.filter.contains', {
-        defaultMessage: 'Contains',
-      }),
-    },
-    {
-      value: 'not_contains',
-      text: i18n.translate('explore.transformations.filter.notContains', {
-        defaultMessage: 'Not contains',
-      }),
-    },
-    {
-      value: 'greater_than',
-      text: i18n.translate('explore.transformations.filter.greaterThan', {
-        defaultMessage: 'Greater than',
-      }),
-    },
-    {
-      value: 'less_than',
-      text: i18n.translate('explore.transformations.filter.lessThan', {
-        defaultMessage: 'Less than',
-      }),
-    },
-  ];
+    [onChange]
+  );
+
+  const handleFieldChange = (fieldSchema: FieldSchema | undefined) => {
+    const newConfig = { ...config, field: fieldSchema?.name || undefined };
+    const newFieldType = fieldSchema?.visFieldType;
+
+    const numericalOnlyOperators = [
+      'greater_than',
+      'less_than',
+      'greater_than_or_equal_to',
+      'less_than_or_equal_to',
+    ];
+    const dateOnlyOperators = [
+      'is_earlier',
+      'is_earlier_or_equal',
+      'is_later',
+      'is_later_or_equal',
+    ];
+
+    // Reset operator if switching field types and current operator is not valid for new type
+    if (newFieldType === VisFieldType.Numerical) {
+      // Switching to numerical - reset if current operator is date-only
+      if (dateOnlyOperators.includes(newConfig.operator)) {
+        newConfig.operator = 'equals';
+      }
+    } else if (newFieldType === VisFieldType.Date) {
+      // Switching to date - reset if current operator is numerical-only
+      if (numericalOnlyOperators.includes(newConfig.operator)) {
+        newConfig.operator = 'equals';
+      }
+    } else {
+      // Switching to categorical - reset if current operator is numerical-only or date-only
+      if (
+        numericalOnlyOperators.includes(newConfig.operator) ||
+        dateOnlyOperators.includes(newConfig.operator)
+      ) {
+        newConfig.operator = 'equals';
+      }
+    }
+
+    updateConfig(newConfig);
+  };
+
+  // Filter operators based on field type
+  let operatorOptions = allOperatorOptions;
+  if (fieldType === VisFieldType.Numerical) {
+    operatorOptions = [...allOperatorOptions, ...numericalOperatorOptions];
+  } else if (fieldType === VisFieldType.Date) {
+    // For date fields: show all categorical operators + date-specific operators
+    operatorOptions = [...allOperatorOptions, ...dateOperatorOptions];
+  }
 
   return (
     <EuiFlexGroup direction="column" gutterSize="s">
       <EuiFlexItem>
-        <EuiFormRow
-          label={i18n.translate('explore.transformations.filter.fieldLabel', {
-            defaultMessage: 'Field',
-          })}
-          display="columnCompressed"
-        >
-          <EuiSelect
-            compressed
-            options={fieldOptions}
-            value={config.field || ''}
-            onChange={(e) => {
-              onChange({ ...config, field: e.target.value || undefined });
-            }}
-            data-test-subj="filterFieldSelect"
-          />
-        </EuiFormRow>
+        <FieldSelector
+          configField={config.field}
+          availableFields={availableFields}
+          updateConfigField={handleFieldChange}
+          testSubjPrefix="filter"
+        />
       </EuiFlexItem>
       <EuiFlexItem>
         <EuiFormRow
@@ -105,7 +116,7 @@ const FilterEditor = ({
             options={operatorOptions}
             value={config.operator}
             onChange={(e) => {
-              onChange({
+              updateConfig({
                 ...config,
                 operator: e.target.value as FilterConfig['operator'],
               });
@@ -125,7 +136,7 @@ const FilterEditor = ({
             compressed
             value={config.value}
             onChange={(e) => {
-              onChange({ ...config, value: e.target.value });
+              updateConfig({ ...config, value: e.target.value });
             }}
             placeholder={i18n.translate('explore.transformations.filter.valuePlaceholder', {
               defaultMessage: 'Enter value...',
@@ -151,8 +162,8 @@ export function createFilterTransformation(): TransformationInstance {
     transformationMethod: (data: any[], config: any) => {
       const { field, operator, value } = config as FilterConfig;
 
-      // Return original data if field is not selected
-      if (!field) {
+      // Return original data if config is incomplete
+      if (!isConfigComplete({ field, operator, value })) {
         return data;
       }
 
@@ -184,17 +195,84 @@ export function createFilterTransformation(): TransformationInstance {
               return !isNaN(numValue) && fieldValue > numValue;
             }
             return fieldValueStr > compareValue;
+          case 'greater_than_or_equal_to':
+            if (typeof fieldValue === 'number') {
+              const numValue = parseFloat(value);
+              return !isNaN(numValue) && fieldValue >= numValue;
+            }
+            return fieldValueStr >= compareValue;
           case 'less_than':
-            // Try numeric comparison first, fall back to string comparison
             if (typeof fieldValue === 'number') {
               const numValue = parseFloat(value);
               return !isNaN(numValue) && fieldValue < numValue;
             }
             return fieldValueStr < compareValue;
+          case 'less_than_or_equal_to':
+            if (typeof fieldValue === 'number') {
+              const numValue = parseFloat(value);
+              return !isNaN(numValue) && fieldValue <= numValue;
+            }
+            return fieldValueStr <= compareValue;
+          case 'is_earlier':
+            // Date comparison - convert both to Date objects
+            try {
+              const fieldDate = new Date(fieldValue);
+              const compareDate = new Date(value);
+              return (
+                !isNaN(fieldDate.getTime()) &&
+                !isNaN(compareDate.getTime()) &&
+                fieldDate < compareDate
+              );
+            } catch {
+              return false;
+            }
+          case 'is_earlier_or_equal':
+            try {
+              const fieldDate = new Date(fieldValue);
+              const compareDate = new Date(value);
+              return (
+                !isNaN(fieldDate.getTime()) &&
+                !isNaN(compareDate.getTime()) &&
+                fieldDate <= compareDate
+              );
+            } catch {
+              return false;
+            }
+          case 'is_later':
+            try {
+              const fieldDate = new Date(fieldValue);
+              const compareDate = new Date(value);
+              return (
+                !isNaN(fieldDate.getTime()) &&
+                !isNaN(compareDate.getTime()) &&
+                fieldDate > compareDate
+              );
+            } catch {
+              return false;
+            }
+          case 'is_later_or_equal':
+            try {
+              const fieldDate = new Date(fieldValue);
+              const compareDate = new Date(value);
+              return (
+                !isNaN(fieldDate.getTime()) &&
+                !isNaN(compareDate.getTime()) &&
+                fieldDate >= compareDate
+              );
+            } catch {
+              return false;
+            }
           default:
             return true;
         }
       });
+    },
+    resetConfig: (config: FilterConfig, availableFieldNames: Set<string>) => {
+      const c = { ...config };
+      if (c.field && !availableFieldNames.has(c.field)) {
+        return { ...c, field: undefined, value: '' };
+      }
+      return c;
     },
     Editor: FilterEditor,
   };

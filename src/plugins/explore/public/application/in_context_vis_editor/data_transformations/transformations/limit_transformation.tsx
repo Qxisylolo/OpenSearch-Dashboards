@@ -6,7 +6,7 @@
 import uuid from 'uuid';
 import { EuiFieldNumber, EuiFormRow } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
-import { TransformationInstance, TransformationDefinition } from '../types';
+import { TransformationInstance, TransformationDefinition, FieldSchema } from '../types';
 
 interface LimitConfig {
   limit: number;
@@ -18,7 +18,6 @@ const LimitEditor = ({
 }: {
   config: LimitConfig;
   onChange: (newConfig: LimitConfig) => void;
-  // availableFields: string[];
 }) => (
   <EuiFormRow
     label={i18n.translate('explore.transformations.limit.rowsLabel', {

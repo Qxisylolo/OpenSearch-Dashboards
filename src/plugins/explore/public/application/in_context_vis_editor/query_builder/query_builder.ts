@@ -147,6 +147,9 @@ export class QueryBuilder {
    */
   public transformedResultState$ = new BehaviorSubject<QueryResultState>(undefined);
 
+  // Per-stage field schemas
+  public stageSchemas$ = new BehaviorSubject<Array<Array<{ name?: string; type?: string }>>>([]);
+
   constructor(getServices: () => ExploreServices) {
     this.getServices = getServices;
   }
@@ -226,7 +229,9 @@ export class QueryBuilder {
   consoleResults() {
     const sub = combineLatest([this.resultState$, this.queryState$]).subscribe(
       ([result, queryState]) => {
+        // eslint-disable-next-line no-console
         console.log('Query:', queryState.query);
+        // eslint-disable-next-line no-console
         console.log('Result:', result);
       }
     );
@@ -611,23 +616,38 @@ export class QueryBuilder {
   }
 
   private setupTransformedResultState() {
-    // Unsubscribe from previous transformation subscription if it exists
     if (this.transformationSubscription) {
       this.transformationSubscription.unsubscribe();
     }
 
-    // subscription that combines resultState and pipeline
     this.transformationSubscription = combineLatest([
       this.resultState$,
       this.transformationService.pipeline$,
     ])
       .pipe(
-        map(([rawResult]) => {
-          console.log('trigger applyPipeline');
-          if (!rawResult) return undefined;
+        map(([rawResult, pipeline]) => {
+          if (!rawResult) {
+            this.stageSchemas$.next([]);
+            return undefined;
+          }
+
           const rawRows = rawResult.hits?.hits ?? [];
-          const transformedRows = this.transformationService.applyPipeline(rawRows);
-          return { ...rawResult, hits: { ...rawResult.hits, hits: transformedRows } };
+          const originalSchema = rawResult.fieldSchema ?? [];
+
+          // execute pipeline and collect per-stage schemas
+          const { rows: transformedRows, stageSchemas } = this.transformationService.applyPipeline(
+            rawRows,
+            originalSchema
+          );
+
+          this.stageSchemas$.next(stageSchemas);
+
+          const finalSchema = stageSchemas[stageSchemas.length - 1];
+          return {
+            ...rawResult,
+            hits: { ...rawResult.hits, hits: transformedRows },
+            fieldSchema: finalSchema,
+          };
         })
       )
       .subscribe((transformedResult) => {
@@ -672,6 +692,7 @@ export class QueryBuilder {
     this.queryEditorState$ = new BehaviorSubject<QueryEditorState>(initialQueryEditorState);
     this.resultState$ = new BehaviorSubject<QueryResultState>(undefined);
     this.transformedResultState$ = new BehaviorSubject<QueryResultState>(undefined);
+    this.stageSchemas$ = new BehaviorSubject<Array<Array<{ name?: string; type?: string }>>>([]);
     this.datasetView$ = new BehaviorSubject<DatasetViewState>({
       dataView: undefined,
       isLoading: false,
