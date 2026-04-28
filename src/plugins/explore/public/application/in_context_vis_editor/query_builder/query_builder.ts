@@ -643,6 +643,8 @@ export class QueryBuilder {
             originalSchema
           );
 
+          console.log('setupTransformedResultState rows', rawRows, stageSchemas, pipeline);
+
           this.stageSchemas$.next(stageSchemas);
 
           const finalSchema = stageSchemas[stageSchemas.length - 1];

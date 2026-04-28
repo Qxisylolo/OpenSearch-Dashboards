@@ -105,6 +105,7 @@ const GroupByEditor = ({
   // Auto-populate aggregations when availableFields changes:
   // add rows for new fields, remove rows for gone fields, keep existing methods
   useEffect(() => {
+    if (availableFields.length === 0) return;
     const existingMap = new Map((config.aggregations ?? []).map((r) => [r.field, r.method]));
     const newAggs: AggRule[] = availableFields
       .filter((f) => f.name !== config.groupByField && !manuallyRemovedRef.current.has(f.name))

@@ -170,6 +170,7 @@ export class TransformationService implements ITransformationService {
     let currentSchema: Array<{ name?: string; type?: string }> = [...originalSchema];
 
     for (const instance of registry) {
+      console.log('instance', instance);
       // ensure stageSchemas[i] aligns with pipeline[i]
       stageSchemas.push(currentSchema);
 
