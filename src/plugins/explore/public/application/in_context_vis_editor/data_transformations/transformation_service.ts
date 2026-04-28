@@ -61,7 +61,7 @@ export class TransformationService implements ITransformationService {
   }
 
   init() {
-    // this.consolePipe();
+    this.consolePipe();
   }
   consolePipe() {
     this.pipeline$.subscribe((pipe) => {
@@ -145,6 +145,10 @@ export class TransformationService implements ITransformationService {
 
   clearPipeline(): void {
     this.pipeline$.next([]);
+    // Also clear URL state so it doesn't restore the old pipeline on next render
+    if (this.urlStateStorage) {
+      this.urlStateStorage.set(TRANSFORMATION_STATE_KEY, [], { replace: true });
+    }
   }
 
   /**

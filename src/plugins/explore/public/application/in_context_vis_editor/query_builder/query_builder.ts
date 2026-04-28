@@ -312,6 +312,9 @@ export class QueryBuilder {
           // sync dataset change
           // check isLanguageChanged and isInitialized for the initial sync
           if (isDatasetChanged || isLanguageChanged || !this.isInitialized) {
+            if (isDatasetChanged) {
+              this.transformationService.clearPipeline();
+            }
             this.datasetView$.next({ ...this.datasetView$.getValue(), isLoading: true });
             return from(this.handleDatasetChange(newQuery.dataset));
           }

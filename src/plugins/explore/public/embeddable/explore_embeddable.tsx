@@ -65,6 +65,10 @@ import {
   sortByTransformationDefinition,
   UrlTransformationState,
   filterTransformationDefinition,
+  addFieldTransformationDefinition,
+  filterFieldsTransformationDefinition,
+  groupByTransformationDefinition,
+  extractFieldsTransformationDefinition,
 } from '../application/in_context_vis_editor/data_transformations';
 
 // TODO cleanup unused props
@@ -184,6 +188,11 @@ export class ExploreEmbeddable
     this.transformationService.registerDefinition(limitTransformationDefinition);
     this.transformationService.registerDefinition(sortByTransformationDefinition);
     this.transformationService.registerDefinition(filterTransformationDefinition);
+    this.transformationService.registerDefinition(addFieldTransformationDefinition);
+    this.transformationService.registerDefinition(filterFieldsTransformationDefinition);
+    this.transformationService.registerDefinition(groupByTransformationDefinition);
+    this.transformationService.registerDefinition(extractFieldsTransformationDefinition);
+
     this.initializeTransformationPipeline();
 
     // Initialize variable support BEFORE search props so the interpolation
@@ -527,9 +536,15 @@ export class ExploreEmbeddable
         }),
     });
     const rawRows = resp.hits.hits;
-    const transformedRows = this.transformationService.applyPipeline(rawRows);
     const fieldSchema = searchSource.getDataFrame()?.schema;
-    const visualizationData = normalizeResultRows(transformedRows, fieldSchema ?? []);
+    const { rows: transformedRows, stageSchemas } = this.transformationService.applyPipeline(
+      rawRows,
+      fieldSchema ?? []
+    );
+
+    const finalFieldSchema = stageSchemas[stageSchemas?.length - 1];
+
+    const visualizationData = normalizeResultRows(transformedRows, finalFieldSchema ?? []);
 
     // TODO: Confirm if tab is in visualization but visualization is null, what to display?
     // const displayVis = rows?.length > 0 && visualizationData && visualizationData.ruleId;

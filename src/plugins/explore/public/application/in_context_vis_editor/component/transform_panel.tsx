@@ -48,7 +48,7 @@ export const TransformPanel = ({
     queryBuilder.stageSchemas$.getValue()
   );
 
-  console.log('stageSchemas', stageSchemas);
+  // console.log('stageSchemas', stageSchemas);
 
   const getAvailableFieldsForIndex = (index: number): FieldSchema[] => {
     const raw = stageSchemas[index] ?? [];

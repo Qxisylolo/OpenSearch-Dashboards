@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import uuid from 'uuid';
 import {
   EuiFormRow,
@@ -198,6 +198,39 @@ const AddFieldEditor = ({
     },
     [config, onChange]
   );
+
+  useEffect(() => {
+    console.log('config', config, availableFields);
+  }, [config, availableFields]);
+
+  // Remove any selected fields that no longer exist in availableFields
+  useEffect(() => {
+    if (availableFields.length === 0) return;
+    const names = new Set(availableFields.map((f) => f.name));
+    const patch: Partial<AddFieldConfig> = {};
+
+    if (config.mode === 'binary') {
+      if (config.field1 && config.field1 !== CUSTOM_VALUE_KEY && !names.has(config.field1)) {
+        patch.field1 = undefined;
+        patch.field1CustomValue = '';
+      }
+      if (config.field2 && config.field2 !== CUSTOM_VALUE_KEY && !names.has(config.field2)) {
+        patch.field2 = undefined;
+        patch.field2CustomValue = '';
+      }
+    } else if (config.mode === 'unary') {
+      if (config.unaryField && !names.has(config.unaryField)) {
+        patch.unaryField = undefined;
+      }
+    } else {
+      const valid = (config.cumulativeFields ?? []).filter((f) => names.has(f.name));
+      if (valid.length !== (config.cumulativeFields ?? []).length) {
+        patch.cumulativeFields = valid;
+      }
+    }
+
+    if (Object.keys(patch).length > 0) onChange({ ...config, ...patch });
+  }, [availableFields]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // add field transformation only consider numerical field
   const numericalFields = availableFields.filter((f) => f.visFieldType === VisFieldType.Numerical);

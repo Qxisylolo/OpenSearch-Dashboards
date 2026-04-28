@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import uuid from 'uuid';
 import { EuiFormRow, EuiButtonGroup, EuiFlexGroup, EuiFlexItem } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
@@ -28,6 +28,13 @@ const SortByEditor = ({
   const handleFieldChange = (fieldSchema: FieldSchema | undefined) => {
     onChange({ ...config, field: fieldSchema?.name || undefined });
   };
+
+  useEffect(() => {
+    if (availableFields.length === 0) return;
+    if (config.field && !availableFields.find((f) => f.name === config.field)) {
+      onChange({ ...config, field: undefined });
+    }
+  });
 
   const orderOptions = [
     {

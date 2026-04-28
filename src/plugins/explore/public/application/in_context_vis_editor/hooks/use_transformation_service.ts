@@ -13,14 +13,10 @@ import { filterFieldsTransformationDefinition } from '../data_transformations/tr
 import { convertFieldTypeTransformationDefinition } from '../data_transformations/transformations/convert_field_type_transformation';
 import { reduceTransformationDefinition } from '../data_transformations/transformations/reduce_transformation';
 import { groupByTransformationDefinition } from '../data_transformations/transformations/group_by_transformation';
+import { extractFieldsTransformationDefinition } from '../data_transformations/transformations/extract_fields_transformation';
 import { useQueryBuilderState } from './use_query_builder_state';
 import { getServices } from '../../../services/services';
 import { UrlTransformationState } from '../data_transformations';
-
-/**
- * Hook that creates a standalone TransformationService, registers all built-in transformation
- * definitions, wires it into QueryBuilder, and initializes URL sync.
- */
 
 let globalTransformationService: TransformationService | undefined;
 
@@ -36,80 +32,63 @@ export const useTransformationService = (
 
     const service = new TransformationService();
     service.init();
-    // Register all built-in transformation definitions
     service.registerDefinition(limitTransformationDefinition);
     service.registerDefinition(sortByTransformationDefinition);
     service.registerDefinition(filterTransformationDefinition);
     service.registerDefinition(addFieldTransformationDefinition);
     service.registerDefinition(filterFieldsTransformationDefinition);
-    // service.registerDefinition(convertFieldTypeTransformationDefinition);
-    // service.registerDefinition(reduceTransformationDefinition);
+    service.registerDefinition(convertFieldTypeTransformationDefinition);
+    service.registerDefinition(reduceTransformationDefinition);
     service.registerDefinition(groupByTransformationDefinition);
+    service.registerDefinition(extractFieldsTransformationDefinition);
 
     globalTransformationService = service;
-
     return service;
   }, []);
 
-  // Wire service to QueryBuilder and setup dirty state tracking
+  // set service to QueryBuilder
   useEffect(() => {
     if (!transformationService) return;
-
     queryBuilder.setTransformationService(transformationService);
-
-    // Subscribe to pipeline changes and mark editor as dirty when pipeline changes
-    const subscription = transformationService.pipeline$.subscribe((pipeline) => {
+    const subscription = transformationService.pipeline$.subscribe(() => {
       queryBuilder.updateQueryEditorState({ isQueryEditorDirty: true });
     });
-
     return () => subscription.unsubscribe();
   }, [queryBuilder, transformationService]);
 
-  // One-time initialization: restore saved pipeline and init URL sync
+  // init URL sync once on mount — before any restore so URL state is available
   useEffect(() => {
-    if (!transformationService) return;
-
-    // Restore savedTransformationPipeline (only if provided)
-    if (savedTransformationPipeline && savedTransformationPipeline.length > 0) {
-      const restoredPipeline: any[] = [];
-      for (const item of savedTransformationPipeline) {
-        const definition = transformationService.getDefinition(item.definitionId);
-        if (definition) {
-          const instance = definition.createInstance();
-          restoredPipeline.push({
-            ...instance,
-            instance_id: item.instanceId,
-            config: item.config,
-            hide: item.hide,
-          });
-        }
-      }
-      if (restoredPipeline.length > 0) {
-        transformationService.setPipeline(restoredPipeline);
-      }
-    }
-
-    // Initialize URL sync (only once, after restoration)
     const { osdUrlStateStorage } = getServices();
     if (osdUrlStateStorage) {
       transformationService.initUrlSync(osdUrlStateStorage);
     }
-  }, [savedTransformationPipeline, transformationService]);
+  }, [transformationService]);
 
-  // useEffect(() => {
-  //   return () => {
-  //     console.trace('who');
-  //     console.log('destory', transformationService);
-  //   };
-  // }, []);
+  // Restore saved pipeline when it arrives
+  useEffect(() => {
+    if (!savedTransformationPipeline || savedTransformationPipeline.length === 0) return;
+
+    const restoredPipeline: any[] = [];
+    for (const item of savedTransformationPipeline) {
+      const definition = transformationService.getDefinition(item.definitionId);
+      if (definition) {
+        const instance = definition.createInstance();
+        restoredPipeline.push({
+          ...instance,
+          instance_id: item.instanceId,
+          config: item.config,
+          hide: item.hide,
+        });
+      }
+    }
+    if (restoredPipeline.length > 0) {
+      transformationService.setPipeline(restoredPipeline);
+    }
+  }, [savedTransformationPipeline, transformationService]);
 
   return transformationService;
 };
 
-/**
- * Cleanup function to destroy the global transformation service singleton.
- * Should be called when the VisualizationEditorPage unmounts.
- */
 export const cleanupGlobalTransformationService = () => {
   if (globalTransformationService) {
     globalTransformationService.destroy();

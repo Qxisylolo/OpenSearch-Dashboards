@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import uuid from 'uuid';
 import { EuiFormRow, EuiSelect, EuiFieldText, EuiFlexGroup, EuiFlexItem } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
@@ -43,6 +43,14 @@ const FilterEditor = ({
     },
     [onChange]
   );
+
+  // Reset field if it no longer exists in availableFields
+  useEffect(() => {
+    if (availableFields.length === 0) return;
+    if (config.field && !availableFields.find((f) => f.name === config.field)) {
+      onChange({ ...config, field: undefined, value: '' });
+    }
+  }, [availableFields]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFieldChange = (fieldSchema: FieldSchema | undefined) => {
     const newConfig = { ...config, field: fieldSchema?.name || undefined };

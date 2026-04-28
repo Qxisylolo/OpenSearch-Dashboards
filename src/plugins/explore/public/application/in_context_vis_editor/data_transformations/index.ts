@@ -45,3 +45,11 @@ export {
   createGroupByTransformation,
   groupByTransformationDefinition,
 } from './transformations/group_by_transformation';
+export {
+  createExtractFieldsTransformation,
+  extractFieldsTransformationDefinition,
+} from './transformations/extract_fields_transformation';
+export {
+  createAddFieldTransformation,
+  addFieldTransformationDefinition,
+} from './transformations/add_field_transformation';
