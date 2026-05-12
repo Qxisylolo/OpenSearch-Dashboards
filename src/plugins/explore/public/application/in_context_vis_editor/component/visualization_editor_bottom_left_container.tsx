@@ -181,17 +181,22 @@ export const VisualizationContainer = () => {
 
   const { visualizationBuilderForEditor: visualizationBuilder } = useVisualizationBuilder();
   const { queryBuilder } = useQueryBuilderState();
-  // Subscribe to the derived stream: resultState → pipeline → transformedResult
-  const transformedResult = useObservable(queryBuilder.transformedResultState$, undefined);
+  const transformServices = useTransformationService();
+
+  const resultState = useObservable(queryBuilder.resultState$, undefined);
+
+  const pipeline = useObservable(
+    transformServices.getPipeline$(),
+    transformServices.pipeline$.getValue()
+  );
 
   useEffect(() => {
-    if (transformedResult) {
-      const rows = transformedResult.hits?.hits || [];
-      const fieldSchema = transformedResult.fieldSchema || [];
-      console.log('rows fieldSchema', rows, fieldSchema);
-      visualizationBuilder.handleData(rows, fieldSchema);
-    }
-  }, [visualizationBuilder, transformedResult]);
+    if (!resultState) return;
+    const rows = resultState.hits?.hits || [];
+    const fieldSchema = resultState.fieldSchema || [];
+    visualizationBuilder.handleData(rows, fieldSchema);
+    // pipeline change will trigger handle data
+  }, [visualizationBuilder, resultState, pipeline]);
 
   const onSelectTimeRange = useCallback(
     (timeRange?: TimeRange) => {

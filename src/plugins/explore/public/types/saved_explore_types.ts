@@ -28,7 +28,7 @@ export interface SavedExplore
   queryState?: string; // Serialized query state
   version?: number;
   visualization?: string; // Serialized visualization state
-  dataTransformationJSON?: string; // Serialized data transformation pipeline
+  // dataTransformationJSON?: string; // Serialized data transformation pipeline
   type?: string;
   kibanaSavedObjectMeta?: {
     searchSourceJSON: string;
@@ -45,7 +45,7 @@ export interface SavedExploreAttributes {
   uiState: string; // Serialized UI state
   queryState: string; // Serialized query state
   version: number;
-  dataTransformationJSON?: string; // Serialized data transformation pipeline
+  // dataTransformationJSON?: string; // Serialized data transformation pipeline
   kibanaSavedObjectMeta: {
     searchSourceJSON: string;
   };

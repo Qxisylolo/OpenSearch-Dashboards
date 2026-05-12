@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   EuiButton,
   EuiCard,
@@ -19,7 +19,7 @@ import {
   EuiTitle,
 } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
-import { ITransformationService } from '../data_transformations/transformation_service';
+import { ITransformationService } from '../data_transformations';
 
 interface TransformSelectorButtonProps {
   transformationService: ITransformationService;
@@ -43,7 +43,9 @@ export const TransformSelectorButton = ({
     closeFlyout();
   };
 
-  const allMethods = transformationService.getDefinitions();
+  const allMethods = useMemo(() => {
+    return transformationService.getDefinitions();
+  }, [transformationService]);
   const filtered = allMethods.filter((m) =>
     m.label.toLowerCase().includes(searchText.toLowerCase())
   );

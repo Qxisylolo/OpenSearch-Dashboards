@@ -4,12 +4,14 @@
  */
 
 import uuid from 'uuid';
-import { EuiFieldNumber, EuiFormRow } from '@elastic/eui';
+import { EuiFormRow } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
-import { TransformationInstance, TransformationDefinition, FieldSchema } from '../types';
+import { TransformationInstance, TransformationDefinition } from '../index';
+import { OpenSearchSearchHit } from '../../../../types/doc_views_types';
+import { DebouncedFieldNumber } from '../../../../components/visualizations/style_panel/utils';
 
 interface LimitConfig {
-  limit: number;
+  limit: number | undefined;
 }
 
 const LimitEditor = ({
@@ -25,17 +27,12 @@ const LimitEditor = ({
     })}
     display="columnCompressed"
   >
-    <EuiFieldNumber
-      compressed
+    <DebouncedFieldNumber
       value={config.limit}
       min={0}
-      onChange={(e) => {
-        const int = parseInt(e.target.value, 10);
-        if (!isNaN(int) && int >= 0) {
-          onChange({ limit: int });
-        }
-      }}
+      onChange={(val) => onChange({ limit: val })}
       data-test-subj="limitTransformationInput"
+      placeholder="Enter a value"
     />
   </EuiFormRow>
 );
@@ -46,8 +43,10 @@ export function createLimitTransformation(): TransformationInstance {
     label: i18n.translate('explore.transformations.limit.label', { defaultMessage: 'Limit' }),
     config: { limit: 10 } as LimitConfig,
     hide: false,
-    transformationMethod: (data: any[], config: any) =>
-      data.slice(0, (config as LimitConfig).limit),
+    transformationMethod: (data: OpenSearchSearchHit[], config: LimitConfig) => {
+      if (config.limit === undefined) return data;
+      return data.slice(0, config.limit);
+    },
     Editor: LimitEditor,
   };
 }

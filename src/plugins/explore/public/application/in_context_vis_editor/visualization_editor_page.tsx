@@ -29,10 +29,7 @@ import { VISUALIZATION_EDITOR_APP_ID } from '../../../common';
 import { getBreadcrumbs } from './utils';
 import { useInitialContainerContext } from './hooks/use_initial_container_context';
 import { useVariables } from './hooks/use_variables';
-import {
-  cleanupGlobalTransformationService,
-  useTransformationService,
-} from './hooks/use_transformation_service';
+import { cleanupGlobalTransformationService } from './hooks/use_transformation_service';
 
 export const VisualizationEditorPage = ({
   setHeaderActionMenu,
@@ -71,8 +68,6 @@ export const VisualizationEditorPage = ({
     isLoading,
   } = useInitialSaveExplore();
 
-  // const transformServices = useTransformationService(savedTransformationPipeline);
-
   useEffect(() => {
     const init = async () => {
       if (!savedExplore) return;
@@ -108,25 +103,6 @@ export const VisualizationEditorPage = ({
       visualizationBuilderForEditor.init();
       await queryBuilder.init({ savedQueryState });
 
-      // if (savedTransformationPipeline && savedTransformationPipeline.length > 0) {
-      //   const restoredPipeline = savedTransformationPipeline
-      //     .map((item) => {
-      //       const definition = transformServices.getDefinition(item.definitionId);
-      //       if (!definition) return null;
-      //       const instance = definition.createInstance();
-      //       return {
-      //         ...instance,
-      //         instance_id: item.instanceId,
-      //         config: item.config,
-      //         hide: item.hide,
-      //       };
-      //     })
-      //     .filter(Boolean);
-      //   if (restoredPipeline.length > 0) {
-      //     transformServices.setPipeline(restoredPipeline as any);
-      //   }
-      // }
-
       if (savedExplore.id || queryBuilder.queryState$.getValue().query !== '') {
         // For an existing saved explore, execute the query on page load.
         // For a new saved explore, execute the query only when it is not empty.
@@ -150,7 +126,6 @@ export const VisualizationEditorPage = ({
     savedVisConfig,
     savedQueryState,
     savedTransformationPipeline,
-    // transformServices,
     osdUrlStateStorage,
     visualizationBuilderForEditor,
   ]);

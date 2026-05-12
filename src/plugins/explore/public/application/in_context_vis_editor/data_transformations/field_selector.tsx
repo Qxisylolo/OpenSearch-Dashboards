@@ -16,7 +16,7 @@ import {
 } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 
-import { FieldSchema } from './types';
+import { FieldSchema } from './index';
 
 interface FieldSelectorProps {
   configField?: string | undefined;
@@ -27,6 +27,7 @@ interface FieldSelectorProps {
   testSubjPrefix?: string;
   showLabel?: boolean;
   supportMulti?: boolean;
+  supportClearSelection?: boolean;
 }
 
 export const FieldSelector = ({
@@ -38,6 +39,7 @@ export const FieldSelector = ({
   testSubjPrefix = 'field',
   showLabel = true,
   supportMulti = false,
+  supportClearSelection = true,
 }: FieldSelectorProps) => {
   const [isFieldPopoverOpen, setIsFieldPopoverOpen] = useState(false);
 
@@ -92,7 +94,7 @@ export const FieldSelector = ({
                 {buttonLabel}
               </EuiButtonEmpty>
             </EuiFlexItem>
-            {hasSelection && (
+            {hasSelection && supportClearSelection && (
               <EuiFlexItem grow={false}>
                 <EuiButtonIcon
                   iconType="cross"

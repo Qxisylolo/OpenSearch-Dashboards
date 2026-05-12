@@ -3,14 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import uuid from 'uuid';
-import { EuiButtonGroup, EuiFieldText, EuiFlexGroup, EuiFlexItem, EuiFormRow } from '@elastic/eui';
+import { EuiButtonGroup, EuiFlexGroup, EuiFlexItem, EuiFormRow } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import { get } from 'lodash';
-import { TransformationInstance, TransformationDefinition, FieldSchema } from '../types';
+import { TransformationInstance, TransformationDefinition, FieldSchema } from '../index';
 import { FieldSelector } from '../field_selector';
 import { VisFieldType } from '../../../../components/visualizations/types';
+import { OpenSearchSearchHit } from '../../../../types/doc_views_types';
+import { DebouncedFieldText } from '../../../../components/visualizations/style_panel/utils';
 
 type ParseFormat = 'json' | 'object';
 
@@ -60,15 +62,17 @@ const ExtractFieldsEditor = ({
     [config, onChange]
   );
 
-  const possibleFields = availableFields.filter(
-    (f) =>
-      f.visFieldType !== VisFieldType.Numerical &&
-      f.visFieldType !== VisFieldType.Date &&
-      f.visFieldType !== VisFieldType.Categorical
+  const possibleFields = useMemo(
+    () =>
+      availableFields.filter(
+        (f) => f.visFieldType !== VisFieldType.Numerical && f.visFieldType !== VisFieldType.Date
+      ),
+    [availableFields]
   );
 
   useEffect(() => {
-    if (possibleFields.length === 0) return;
+    // only guard initial load
+    if (availableFields.length === 0) return;
     if (config.field && !possibleFields.find((f) => f.name === config.field)) {
       onChange({ ...config, field: undefined });
     }
@@ -125,10 +129,9 @@ const ExtractFieldsEditor = ({
           })}
           display="columnCompressed"
         >
-          <EuiFieldText
-            compressed
+          <DebouncedFieldText
             value={config.prefix}
-            onChange={(e) => update({ prefix: e.target.value })}
+            onChange={(val) => update({ prefix: val })}
             placeholder={i18n.translate('explore.transformations.extractFields.prefixPlaceholder', {
               defaultMessage: 'Optional prefix...',
             })}
@@ -151,18 +154,17 @@ export function createExtractFieldsTransformation(): TransformationInstance {
       prefix: '',
     } as ExtractFieldsConfig,
     hide: false,
-    transformationMethod: (data: any[], config: ExtractFieldsConfig) => {
-      const c = { ...config };
-      if (!isConfigComplete(c)) return data;
+    transformationMethod: (data: OpenSearchSearchHit[], config: ExtractFieldsConfig) => {
+      if (!isConfigComplete(config)) return data;
 
       return data.map((row) => {
-        const raw = get(row, `_source.${c.field}`);
+        const raw = get(row, `_source.${config.field}`);
         if (raw == null) return row;
 
         const extracted =
-          c.format === 'json'
-            ? extractFromJSON(String(raw), c.prefix)
-            : extractFromObject(raw, c.prefix);
+          config.format === 'json'
+            ? extractFromJSON(String(raw), config.prefix)
+            : extractFromObject(raw, config.prefix);
 
         return {
           ...row,

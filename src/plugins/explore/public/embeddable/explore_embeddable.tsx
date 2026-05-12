@@ -217,13 +217,13 @@ export class ExploreEmbeddable
 
   // initialize transformation pipeline from saved explore
   private initializeTransformationPipeline() {
-    if (!this.savedExplore.dataTransformationJSON) {
+    if (!this.savedExplore.visualization) {
       return;
     }
 
     try {
       const savedPipeline: UrlTransformationState[] = JSON.parse(
-        this.savedExplore.dataTransformationJSON
+        JSON.parse(this.savedExplore.visualization).dataTransformationJSON
       );
 
       if (!savedPipeline || !Array.isArray(savedPipeline) || savedPipeline.length === 0) {

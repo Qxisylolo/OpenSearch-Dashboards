@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect } from 'react';
 import uuid from 'uuid';
-import { EuiFormRow, EuiSelect, EuiFieldText, EuiFlexGroup, EuiFlexItem } from '@elastic/eui';
+import { EuiFormRow, EuiSelect, EuiFlexGroup, EuiFlexItem } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import { get } from 'lodash';
 import {
@@ -19,6 +19,8 @@ import {
 } from '../types';
 import { VisFieldType } from '../../../../components/visualizations/types';
 import { FieldSelector } from '../field_selector';
+import { OpenSearchSearchHit } from '../../../../types/doc_views_types';
+import { DebouncedFieldText } from '../../../../components/visualizations/style_panel/utils';
 
 const isConfigComplete = (config: FilterConfig): boolean => {
   return !!config.field && !!config.operator && config.value.trim() !== '';
@@ -33,7 +35,6 @@ const FilterEditor = ({
   onChange: (newConfig: FilterConfig) => void;
   availableFields: FieldSchema[];
 }) => {
-  // Find the selected field's type
   const selectedField = availableFields.find((field) => field.name === config.field);
   const fieldType = selectedField?.visFieldType;
 
@@ -52,55 +53,24 @@ const FilterEditor = ({
     }
   }, [availableFields]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const getOperatorsForType = (type: VisFieldType | undefined) => {
+    if (type === VisFieldType.Numerical)
+      return [...allOperatorOptions, ...numericalOperatorOptions];
+    if (type === VisFieldType.Date) return [...allOperatorOptions, ...dateOperatorOptions];
+    return allOperatorOptions;
+  };
+
   const handleFieldChange = (fieldSchema: FieldSchema | undefined) => {
-    const newConfig = { ...config, field: fieldSchema?.name || undefined };
-    const newFieldType = fieldSchema?.visFieldType;
-
-    const numericalOnlyOperators = [
-      'greater_than',
-      'less_than',
-      'greater_than_or_equal_to',
-      'less_than_or_equal_to',
-    ];
-    const dateOnlyOperators = [
-      'is_earlier',
-      'is_earlier_or_equal',
-      'is_later',
-      'is_later_or_equal',
-    ];
-
-    // Reset operator if switching field types and current operator is not valid for new type
-    if (newFieldType === VisFieldType.Numerical) {
-      // Switching to numerical - reset if current operator is date-only
-      if (dateOnlyOperators.includes(newConfig.operator)) {
-        newConfig.operator = 'equals';
-      }
-    } else if (newFieldType === VisFieldType.Date) {
-      // Switching to date - reset if current operator is numerical-only
-      if (numericalOnlyOperators.includes(newConfig.operator)) {
-        newConfig.operator = 'equals';
-      }
-    } else {
-      // Switching to categorical - reset if current operator is numerical-only or date-only
-      if (
-        numericalOnlyOperators.includes(newConfig.operator) ||
-        dateOnlyOperators.includes(newConfig.operator)
-      ) {
-        newConfig.operator = 'equals';
-      }
+    const newConfig = { ...config, field: fieldSchema?.name || undefined, value: '' };
+    const validOperators = getOperatorsForType(fieldSchema?.visFieldType);
+    // reset operator if FieldSchema type is changed
+    if (!validOperators.some((op) => op.value === newConfig.operator)) {
+      newConfig.operator = 'equals';
     }
-
     updateConfig(newConfig);
   };
 
-  // Filter operators based on field type
-  let operatorOptions = allOperatorOptions;
-  if (fieldType === VisFieldType.Numerical) {
-    operatorOptions = [...allOperatorOptions, ...numericalOperatorOptions];
-  } else if (fieldType === VisFieldType.Date) {
-    // For date fields: show all categorical operators + date-specific operators
-    operatorOptions = [...allOperatorOptions, ...dateOperatorOptions];
-  }
+  const operatorOptions = getOperatorsForType(fieldType);
 
   return (
     <EuiFlexGroup direction="column" gutterSize="s">
@@ -140,16 +110,12 @@ const FilterEditor = ({
           })}
           display="columnCompressed"
         >
-          <EuiFieldText
-            compressed
+          <DebouncedFieldText
             value={config.value}
-            onChange={(e) => {
-              updateConfig({ ...config, value: e.target.value });
-            }}
+            onChange={(val) => updateConfig({ ...config, value: val })}
             placeholder={i18n.translate('explore.transformations.filter.valuePlaceholder', {
-              defaultMessage: 'Enter value...',
+              defaultMessage: 'Enter a value',
             })}
-            data-test-subj="filterValueInput"
           />
         </EuiFormRow>
       </EuiFlexItem>
@@ -167,8 +133,8 @@ export function createFilterTransformation(): TransformationInstance {
       value: '',
     } as FilterConfig,
     hide: false,
-    transformationMethod: (data: any[], config: any) => {
-      const { field, operator, value } = config as FilterConfig;
+    transformationMethod: (data: OpenSearchSearchHit[], config: FilterConfig) => {
+      const { field, operator, value } = config;
 
       // Return original data if config is incomplete
       if (!isConfigComplete({ field, operator, value })) {
@@ -176,7 +142,7 @@ export function createFilterTransformation(): TransformationInstance {
       }
 
       return data.filter((row) => {
-        // Extract value from OpenSearch hit structure (_source.field)
+        // get value from OpenSearch hit structure (_source.field)
         const fieldValue = get(row, `_source.${field}`);
 
         // Handle null/undefined field values
@@ -222,65 +188,21 @@ export function createFilterTransformation(): TransformationInstance {
             }
             return fieldValueStr <= compareValue;
           case 'is_earlier':
-            // Date comparison - convert both to Date objects
-            try {
-              const fieldDate = new Date(fieldValue);
-              const compareDate = new Date(value);
-              return (
-                !isNaN(fieldDate.getTime()) &&
-                !isNaN(compareDate.getTime()) &&
-                fieldDate < compareDate
-              );
-            } catch {
-              return false;
-            }
           case 'is_earlier_or_equal':
-            try {
-              const fieldDate = new Date(fieldValue);
-              const compareDate = new Date(value);
-              return (
-                !isNaN(fieldDate.getTime()) &&
-                !isNaN(compareDate.getTime()) &&
-                fieldDate <= compareDate
-              );
-            } catch {
-              return false;
-            }
           case 'is_later':
-            try {
-              const fieldDate = new Date(fieldValue);
-              const compareDate = new Date(value);
-              return (
-                !isNaN(fieldDate.getTime()) &&
-                !isNaN(compareDate.getTime()) &&
-                fieldDate > compareDate
-              );
-            } catch {
-              return false;
-            }
-          case 'is_later_or_equal':
-            try {
-              const fieldDate = new Date(fieldValue);
-              const compareDate = new Date(value);
-              return (
-                !isNaN(fieldDate.getTime()) &&
-                !isNaN(compareDate.getTime()) &&
-                fieldDate >= compareDate
-              );
-            } catch {
-              return false;
-            }
+          case 'is_later_or_equal': {
+            const fieldTs = Date.parse(fieldValue);
+            const compareTs = Date.parse(value);
+            if (isNaN(fieldTs) || isNaN(compareTs)) return false;
+            if (operator === 'is_earlier') return fieldTs < compareTs;
+            if (operator === 'is_earlier_or_equal') return fieldTs <= compareTs;
+            if (operator === 'is_later') return fieldTs > compareTs;
+            return fieldTs >= compareTs;
+          }
           default:
             return true;
         }
       });
-    },
-    resetConfig: (config: FilterConfig, availableFieldNames: Set<string>) => {
-      const c = { ...config };
-      if (c.field && !availableFieldNames.has(c.field)) {
-        return { ...c, field: undefined, value: '' };
-      }
-      return c;
     },
     Editor: FilterEditor,
   };
@@ -293,6 +215,7 @@ export const filterTransformationDefinition: TransformationDefinition = {
   description: i18n.translate('explore.transformations.filter.description', {
     defaultMessage: 'Filter rows by field value using various comparison operators',
   }),
+  // TODO icon filter is not applicable
   iconType: 'filter',
   createInstance: createFilterTransformation,
 };

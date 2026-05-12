@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
+import { evaluate } from 'mathjs';
 import uuid from 'uuid';
 import {
   EuiFormRow,
-  EuiFieldText,
   EuiFlexGroup,
   EuiFlexItem,
   EuiSelect,
@@ -16,14 +16,17 @@ import {
 } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import { get } from 'lodash';
-import { TransformationInstance, TransformationDefinition, FieldSchema } from '../types';
+import { TransformationInstance, TransformationDefinition, FieldSchema } from '../index';
 import { FieldSelector } from '../field_selector';
 import { VisFieldType } from '../../../../components/visualizations/types';
+import { OpenSearchSearchHit } from '../../../../types/doc_views_types';
+import { DebouncedFieldText } from '../../../../components/visualizations/style_panel/utils';
+import { binaryOperatorOptions, unaryOperatorOptions, modeToggleOptions } from '../types';
 
-type Mode = 'binary' | 'unary' | 'cumulative';
+type Mode = 'binary' | 'unary' | 'crossFields';
 type BinaryOperator = '+' | '-' | '*' | '/';
 type UnaryOperator = 'abs' | 'ceil' | 'floor' | 'round';
-type CumulativeOperator = 'total' | 'mean';
+type CrossFieldsOperator = 'total' | 'mean' | 'expression';
 
 const CUSTOM_VALUE_KEY = '__CUSTOM__';
 
@@ -38,12 +41,12 @@ interface AddFieldConfig {
   // unary
   unaryOperator: UnaryOperator;
   unaryField: string | undefined;
-  // cumulative
-  cumulativeOperator: CumulativeOperator;
-  cumulativeFields: FieldSchema[];
+  // cross-field
+  crossFieldsOperator: CrossFieldsOperator;
+  crossFields: FieldSchema[];
+  expression: string;
 
   alias: string;
-  replaceAllFields?: boolean;
 }
 
 const isConfigComplete = (config: AddFieldConfig): boolean => {
@@ -54,8 +57,11 @@ const isConfigComplete = (config: AddFieldConfig): boolean => {
       !!config.field2 && (config.field2 !== CUSTOM_VALUE_KEY || !!config.field2CustomValue);
     return v1ok && v2ok;
   }
-  if (config.mode === 'cumulative') {
-    return (config.cumulativeFields ?? []).length > 0;
+  if (config.mode === 'crossFields') {
+    if (config.crossFieldsOperator === 'expression') {
+      return config.expression.trim() !== '';
+    }
+    return (config.crossFields ?? []).length > 0;
   }
   return !!config.unaryField;
 };
@@ -90,7 +96,22 @@ const applyUnary = (v: number, op: UnaryOperator): number | null => {
   }
 };
 
-const OPERATOR_WORDS: Record<BinaryOperator, string> = {
+const evaluateExpression = (expression: string, source: Record<string, unknown>): number | null => {
+  const expr = expression.replace(/\$\{([^}]+)\}/g, (_, fieldName) => {
+    const val = Number(source[fieldName]);
+    return isNaN(val) ? 'NaN' : String(val);
+  });
+  if (expr.includes('NaN')) return null;
+  if (!/^[\d\s+\-*/().]+$/.test(expr)) return null;
+  try {
+    const result = evaluate(expr);
+    return typeof result === 'number' && isFinite(result) ? result : null;
+  } catch {
+    return null;
+  }
+};
+
+const operatorMap: Record<BinaryOperator, string> = {
   '+': 'plus',
   '-': 'minus',
   '*': 'times',
@@ -104,13 +125,16 @@ export const generateAlias = (c: Partial<AddFieldConfig>): string => {
   if (c.mode === 'unary') {
     return c.unaryField ? `${c.unaryOperator || 'abs'}(${c.unaryField})` : '';
   }
-  if (c.mode === 'cumulative') {
-    const fields = (c.cumulativeFields ?? []).map((f) => f.name).join(', ');
-    return fields ? `${c.cumulativeOperator || 'total'}(${fields})` : '';
+  if (c.mode === 'crossFields') {
+    if (c.crossFieldsOperator === 'expression') {
+      return c.expression || '';
+    }
+    const fields = (c.crossFields ?? []).map((f) => f.name).join(', ');
+    return fields ? `${c.crossFieldsOperator || 'total'}(${fields})` : '';
   }
   const f1 = fieldLabel(c.field1, c.field1CustomValue || '');
   const f2 = fieldLabel(c.field2, c.field2CustomValue || '');
-  const op = OPERATOR_WORDS[c.binaryOperator || '+'];
+  const op = operatorMap[c.binaryOperator || '+'];
   return f1 && f2 ? `${f1}_${op}_${f2}` : '';
 };
 
@@ -129,18 +153,13 @@ const FieldPicker = ({
 }) => {
   const isCustom = value === CUSTOM_VALUE_KEY;
 
-  const handleFieldSelect = (fieldSchema: FieldSchema | undefined) => {
-    onFieldChange(fieldSchema?.name);
-  };
-
   if (isCustom) {
     return (
       <EuiFlexGroup gutterSize="xs" alignItems="center" responsive={false}>
         <EuiFlexItem>
-          <EuiFieldText
-            compressed
+          <DebouncedFieldText
             value={customValue}
-            onChange={(e) => onCustomValueChange(e.target.value)}
+            onChange={(val) => onCustomValueChange(val)}
             placeholder={i18n.translate('explore.transformations.addField.enterValuePlaceholder', {
               defaultMessage: 'Enter value',
             })}
@@ -165,7 +184,9 @@ const FieldPicker = ({
           showLabel={false}
           configField={value}
           availableFields={availableFields}
-          updateConfigField={handleFieldSelect}
+          updateConfigField={(fieldSchema: FieldSchema | undefined) => {
+            onFieldChange(fieldSchema?.name);
+          }}
         />
       </EuiFlexItem>
       <EuiFlexItem grow={false}>
@@ -199,14 +220,18 @@ const AddFieldEditor = ({
     [config, onChange]
   );
 
-  useEffect(() => {
-    console.log('config', config, availableFields);
-  }, [config, availableFields]);
+  // add field only supports numerical currently
+  const numericalFields = useMemo(
+    () => availableFields.filter((f) => f.visFieldType === VisFieldType.Numerical),
+    [availableFields]
+  );
 
   // Remove any selected fields that no longer exist in availableFields
   useEffect(() => {
     if (availableFields.length === 0) return;
-    const names = new Set(availableFields.map((f) => f.name));
+    if (config.mode === 'crossFields' && config.crossFieldsOperator === 'expression') return;
+
+    const names = new Set(numericalFields.map((f) => f.name));
     const patch: Partial<AddFieldConfig> = {};
 
     if (config.mode === 'binary') {
@@ -223,66 +248,14 @@ const AddFieldEditor = ({
         patch.unaryField = undefined;
       }
     } else {
-      const valid = (config.cumulativeFields ?? []).filter((f) => names.has(f.name));
-      if (valid.length !== (config.cumulativeFields ?? []).length) {
-        patch.cumulativeFields = valid;
+      const valid = (config.crossFields ?? []).filter((f) => names.has(f.name));
+      if (valid.length !== (config.crossFields ?? []).length) {
+        patch.crossFields = valid;
       }
     }
 
     if (Object.keys(patch).length > 0) onChange({ ...config, ...patch });
-  }, [availableFields]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // add field transformation only consider numerical field
-  const numericalFields = availableFields.filter((f) => f.visFieldType === VisFieldType.Numerical);
-
-  const binaryOperatorOptions = [
-    { value: '+', text: '+' },
-    { value: '-', text: '-' },
-    { value: '*', text: '*' },
-    { value: '/', text: '/' },
-  ];
-
-  const unaryOperatorOptions = [
-    {
-      value: 'abs',
-      text: i18n.translate('explore.transformations.addField.abs', {
-        defaultMessage: 'Absolute value',
-      }),
-    },
-    {
-      value: 'ceil',
-      text: i18n.translate('explore.transformations.addField.ceil', { defaultMessage: 'Ceiling' }),
-    },
-    {
-      value: 'floor',
-      text: i18n.translate('explore.transformations.addField.floor', { defaultMessage: 'Floor' }),
-    },
-    {
-      value: 'round',
-      text: i18n.translate('explore.transformations.addField.round', { defaultMessage: 'Round' }),
-    },
-  ];
-
-  const modeToggleOptions = [
-    {
-      id: 'binary',
-      label: i18n.translate('explore.transformations.addField.binaryMode', {
-        defaultMessage: 'Binary',
-      }),
-    },
-    {
-      id: 'unary',
-      label: i18n.translate('explore.transformations.addField.unaryMode', {
-        defaultMessage: 'Unary',
-      }),
-    },
-    {
-      id: 'cumulative',
-      label: i18n.translate('explore.transformations.addField.cumulativeMode', {
-        defaultMessage: 'Cumulative',
-      }),
-    },
-  ];
+  }, [numericalFields]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <EuiFlexGroup direction="column" gutterSize="s">
@@ -386,7 +359,7 @@ const AddFieldEditor = ({
         <>
           <EuiFlexItem>
             <EuiFormRow
-              label={i18n.translate('explore.transformations.addField.cumulativeOperatorLabel', {
+              label={i18n.translate('explore.transformations.addField.crossFieldsOperatorLabel', {
                 defaultMessage: 'Function',
               })}
               display="columnCompressed"
@@ -406,23 +379,45 @@ const AddFieldEditor = ({
                       defaultMessage: 'Mean',
                     }),
                   },
+                  {
+                    value: 'expression',
+                    text: i18n.translate('explore.transformations.addField.expression', {
+                      defaultMessage: 'Expression',
+                    }),
+                  },
                 ]}
-                value={config.cumulativeOperator}
+                value={config.crossFieldsOperator}
                 onChange={(e) =>
-                  update({ cumulativeOperator: e.target.value as CumulativeOperator })
+                  update({ crossFieldsOperator: e.target.value as CrossFieldsOperator })
                 }
-                data-test-subj="addFieldCumulativeOperatorSelect"
+                data-test-subj="addFieldCrossFieldsOperatorSelect"
               />
             </EuiFormRow>
           </EuiFlexItem>
           <EuiFlexItem>
-            <FieldSelector
-              configFields={(config.cumulativeFields ?? []).map((f) => f.name)}
-              availableFields={numericalFields}
-              updateConfigFields={(fields) => update({ cumulativeFields: fields })}
-              supportMulti
-              testSubjPrefix="addFieldCumulative"
-            />
+            {config.crossFieldsOperator === 'expression' ? (
+              <EuiFormRow
+                label={i18n.translate('explore.transformations.addField.expressionLabel', {
+                  defaultMessage: 'Expression',
+                })}
+                display="columnCompressed"
+              >
+                <DebouncedFieldText
+                  value={config.expression}
+                  onChange={(val) => update({ expression: val })}
+                  placeholder="${field1} + ${field2} * ${field3}"
+                  data-test-subj="addFieldExpressionInput"
+                />
+              </EuiFormRow>
+            ) : (
+              <FieldSelector
+                configFields={(config.crossFields ?? []).map((f) => f.name)}
+                availableFields={numericalFields}
+                updateConfigFields={(fields) => update({ crossFields: fields })}
+                supportMulti
+                testSubjPrefix="addFieldCrossFields"
+              />
+            )}
           </EuiFlexItem>
         </>
       )}
@@ -435,10 +430,9 @@ const AddFieldEditor = ({
           })}
           display="columnCompressed"
         >
-          <EuiFieldText
-            compressed
+          <DebouncedFieldText
             value={config.alias}
-            onChange={(e) => update({ alias: e.target.value })}
+            onChange={(val) => update({ alias: val })}
             placeholder={
               generateAlias(config) ||
               i18n.translate('explore.transformations.addField.aliasPlaceholder', {
@@ -449,23 +443,6 @@ const AddFieldEditor = ({
           />
         </EuiFormRow>
       </EuiFlexItem>
-
-      {/* Replace all fields */}
-      {/* <EuiFlexItem>
-        <EuiFormRow display="columnCompressed">
-          <EuiSwitch
-            label={i18n.translate('explore.transformations.addField.replaceAllFieldsLabel', {
-              defaultMessage: 'Replace all fields',
-            })}
-            checked={config.replaceAllFields}
-            onChange={(e: { target: { checked: boolean } }) =>
-              update({ replaceAllFields: e.target.checked })
-            }
-            compressed
-            data-test-subj="addFieldReplaceAllFieldsSwitch"
-          />
-        </EuiFormRow>
-      </EuiFlexItem> */}
     </EuiFlexGroup>
   );
 };
@@ -485,72 +462,53 @@ export function createAddFieldTransformation(): TransformationInstance {
       field2CustomValue: '',
       unaryOperator: 'abs',
       unaryField: undefined,
-      cumulativeOperator: 'total',
-      cumulativeFields: [],
+      crossFieldsOperator: 'total',
+      crossFields: [],
+      expression: '',
       alias: '',
     } as AddFieldConfig,
     hide: false,
-    transformationMethod: (data: any[], config: any) => {
-      const c = config as AddFieldConfig;
+    transformationMethod: (data: OpenSearchSearchHit[], config: AddFieldConfig) => {
+      if (!isConfigComplete(config)) return data;
 
-      if (!isConfigComplete(c)) return data;
-
-      const alias = c.alias || generateAlias(c);
+      const alias = config.alias || generateAlias(config);
 
       return data.map((row) => {
         let result: number | null = null;
 
-        if (c.mode === 'binary') {
+        if (config.mode === 'binary') {
           const getRaw = (field: string | undefined, custom: string) =>
             field === CUSTOM_VALUE_KEY ? Number(custom) : Number(get(row, `_source.${field}`));
 
-          const v1 = getRaw(c.field1, c.field1CustomValue);
-          const v2 = getRaw(c.field2, c.field2CustomValue);
+          const v1 = getRaw(config.field1, config.field1CustomValue);
+          const v2 = getRaw(config.field2, config.field2CustomValue);
 
           if (!isNaN(v1) && !isNaN(v2)) {
-            result = applyBinary(v1, c.binaryOperator, v2);
+            result = applyBinary(v1, config.binaryOperator, v2);
           }
-        } else if (c.mode === 'unary') {
-          const raw = Number(get(row, `_source.${c.unaryField}`));
+        } else if (config.mode === 'unary') {
+          const raw = Number(get(row, `_source.${config.unaryField}`));
           if (!isNaN(raw)) {
-            result = applyUnary(raw, c.unaryOperator);
+            result = applyUnary(raw, config.unaryOperator);
           }
+        } else if (config.crossFieldsOperator === 'expression') {
+          result = evaluateExpression(config.expression, row._source as Record<string, unknown>);
         } else {
-          // cumulative — row-wise across selected fields
-          const values = (c.cumulativeFields ?? [])
+          const values = (config.crossFields ?? [])
             .map((f) => Number(get(row, `_source.${f.name}`)))
             .filter((v) => !isNaN(v));
           if (values.length > 0) {
             const sum = values.reduce((a, b) => a + b, 0);
-            result = c.cumulativeOperator === 'total' ? sum : sum / values.length;
+            result = config.crossFieldsOperator === 'total' ? sum : sum / values.length;
           }
         }
-        const newSource = { ...row._source, [alias]: result };
+        const newSource =
+          result !== null
+            ? { ...(row._source as Record<string, unknown>), [alias]: result }
+            : { ...(row._source as Record<string, unknown>) };
 
         return { ...row, _source: newSource };
       });
-    },
-    resetConfig: (config: any, availableFieldNames: Set<string>) => {
-      const c = { ...config };
-      if (c.mode === 'binary') {
-        if (c.field1 && c.field1 !== '__CUSTOM__' && !availableFieldNames.has(c.field1)) {
-          c.field1 = undefined;
-          c.field1CustomValue = '';
-        }
-        if (c.field2 && c.field2 !== '__CUSTOM__' && !availableFieldNames.has(c.field2)) {
-          c.field2 = undefined;
-          c.field2CustomValue = '';
-        }
-      } else if (c.mode === 'unary') {
-        if (c.unaryField && !availableFieldNames.has(c.unaryField)) {
-          c.unaryField = undefined;
-        }
-      } else {
-        c.cumulativeFields = ((c.cumulativeFields as FieldSchema[]) ?? []).filter((f) =>
-          availableFieldNames.has(f.name)
-        );
-      }
-      return c;
     },
     Editor: AddFieldEditor,
   };

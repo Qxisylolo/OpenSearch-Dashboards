@@ -127,18 +127,6 @@ export const SaveVisButton = () => {
       isTitleDuplicateConfirmed,
       onTitleDuplicate,
     }: OnSaveProps) => {
-      const axesMapping = visConfig?.axesMapping;
-      const currentTitle = savedExploreToSave.title;
-      savedExploreToSave.title = newTitle;
-      savedExploreToSave.type = undefined; // save explores created in in-context editor don't have flavor
-      savedExploreToSave.visualization = JSON.stringify({
-        title: '',
-        chartType: visConfig?.type ?? 'line',
-        params: visConfig?.styles ?? {},
-        axesMapping,
-      });
-      savedExploreToSave.version = 1;
-
       // Serialize transformation pipeline
       const pipeline = transformationService.pipeline$.getValue();
       const serializedPipeline = pipeline.map((instance) => {
@@ -153,7 +141,19 @@ export const SaveVisButton = () => {
           hide: instance.hide,
         };
       });
-      savedExploreToSave.dataTransformationJSON = JSON.stringify(serializedPipeline);
+
+      const axesMapping = visConfig?.axesMapping;
+      const currentTitle = savedExploreToSave.title;
+      savedExploreToSave.title = newTitle;
+      savedExploreToSave.type = undefined; // save explores created in in-context editor don't have flavor
+      savedExploreToSave.visualization = JSON.stringify({
+        title: '',
+        chartType: visConfig?.type ?? 'line',
+        params: visConfig?.styles ?? {},
+        axesMapping,
+        dataTransformationJSON: JSON.stringify(serializedPipeline),
+      });
+      savedExploreToSave.version = 1;
 
       savedExploreToSave.searchSourceFields = {
         index: datasetView.dataView,

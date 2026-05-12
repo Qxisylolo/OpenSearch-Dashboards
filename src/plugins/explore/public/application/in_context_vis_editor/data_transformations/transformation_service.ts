@@ -19,7 +19,7 @@ import {
   updateTransformationConfig,
   toggleTransformationHide,
   deriveSchemaFromRows,
-} from './registry_utils';
+} from './transformation_utils';
 import { OpenSearchSearchHit } from '../../../types/doc_views_types';
 import { TRANSFORMATION_STATE_KEY } from '../types';
 
@@ -60,23 +60,12 @@ export class TransformationService implements ITransformationService {
     return this.definitions.get(id);
   }
 
-  init() {
-    this.consolePipe();
-  }
-  consolePipe() {
-    this.pipeline$.subscribe((pipe) => {
-      // eslint-disable-next-line no-console
-      console.log('current pipe', pipe);
-    });
-  }
-
   /**
    * Pipeline instances management
    */
 
-  // Pipeline observable that emits the current pipeline whenever it changes.
   getPipeline$(): Observable<TransformationPipeline> {
-    return this.pipeline$.pipe(distinctUntilChanged((prev, curr) => isEqual(prev, curr)));
+    return this.pipeline$.pipe(debounceTime(300));
   }
 
   addInstance(id: string): void {
@@ -107,42 +96,6 @@ export class TransformationService implements ITransformationService {
     this.pipeline$.next(instances);
   }
 
-  /**
-   * Reorder the pipeline and reset configs of moved instances.
-   * Any field references that are no longer available at the new position are cleared.
-   */
-  reorderPipeline(
-    reorderedPipeline: TransformationPipeline,
-    rawRows: any[],
-    originalSchema: Array<{ name?: string; type?: string }>
-  ): void {
-    // Run the pipeline step by step to know available fields at each position
-    let rows = [...rawRows];
-    let currentSchema = originalSchema;
-
-    const reorderedPipe = reorderedPipeline.map((instance) => {
-      const availableNames = new Set(currentSchema.map((f) => f.name ?? ''));
-
-      // reset config against currently available fields
-      const cleanConfig = instance.resetConfig
-        ? instance.resetConfig(instance.config, availableNames)
-        : instance.config;
-
-      const resetInstance = { ...instance, config: cleanConfig };
-
-      try {
-        rows = resetInstance.transformationMethod(rows, cleanConfig);
-        currentSchema = deriveSchemaFromRows(rows, originalSchema);
-      } catch {
-        // keep currentSchema unchanged
-      }
-
-      return resetInstance;
-    });
-
-    this.pipeline$.next(reorderedPipe);
-  }
-
   clearPipeline(): void {
     this.pipeline$.next([]);
     // Also clear URL state so it doesn't restore the old pipeline on next render
@@ -161,24 +114,27 @@ export class TransformationService implements ITransformationService {
     rawRows: OpenSearchSearchHit[],
     originalSchema: Array<{ name?: string; type?: string }> = []
   ): { rows: OpenSearchSearchHit[]; stageSchemas: Array<Array<{ name?: string; type?: string }>> } {
-    const registry = this.pipeline$.getValue();
+    const instances = this.pipeline$.getValue();
     const stageSchemas: Array<Array<{ name?: string; type?: string }>> = [];
 
-    if (registry.length === 0) return { rows: rawRows, stageSchemas: [originalSchema] };
+    if (instances.length === 0) return { rows: rawRows, stageSchemas: [originalSchema] };
 
     let rows = [...rawRows];
     let currentSchema: Array<{ name?: string; type?: string }> = [...originalSchema];
 
-    for (const instance of registry) {
-      console.log('instance', instance);
-      // ensure stageSchemas[i] aligns with pipeline[i]
+    for (const instance of instances) {
       stageSchemas.push(currentSchema);
 
       if (instance.hide) continue;
 
       try {
         rows = instance.transformationMethod(rows, instance.config);
-        currentSchema = deriveSchemaFromRows(rows, originalSchema);
+        // deriveSchemaFromRows handles field add/remove
+        currentSchema = deriveSchemaFromRows(rows, currentSchema);
+        // transformSchema handles type override
+        if (instance.transformSchema) {
+          currentSchema = instance.transformSchema(currentSchema, instance.config);
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(

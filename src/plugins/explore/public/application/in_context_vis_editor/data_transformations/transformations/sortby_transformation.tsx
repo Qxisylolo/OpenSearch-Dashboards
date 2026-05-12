@@ -3,18 +3,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import uuid from 'uuid';
 import { EuiFormRow, EuiButtonGroup, EuiFlexGroup, EuiFlexItem } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import { get } from 'lodash';
-import { TransformationInstance, TransformationDefinition, FieldSchema } from '../types';
+import { TransformationInstance, TransformationDefinition, FieldSchema } from '../index';
 import { FieldSelector } from '../field_selector';
+import { OpenSearchSearchHit } from '../../../../types/doc_views_types';
 
 interface SortByConfig {
   field: string | undefined;
   order: 'asc' | 'desc';
 }
+
+const orderOptions = [
+  {
+    id: 'asc',
+    label: i18n.translate('explore.transformations.sortBy.ascending', {
+      defaultMessage: 'Ascending',
+    }),
+  },
+  {
+    id: 'desc',
+    label: i18n.translate('explore.transformations.sortBy.descending', {
+      defaultMessage: 'Descending',
+    }),
+  },
+];
 
 const SortByEditor = ({
   config,
@@ -29,27 +45,13 @@ const SortByEditor = ({
     onChange({ ...config, field: fieldSchema?.name || undefined });
   };
 
+  // Reset field if it no longer exists in availableFields
   useEffect(() => {
     if (availableFields.length === 0) return;
     if (config.field && !availableFields.find((f) => f.name === config.field)) {
       onChange({ ...config, field: undefined });
     }
   });
-
-  const orderOptions = [
-    {
-      id: 'asc',
-      label: i18n.translate('explore.transformations.sortBy.ascending', {
-        defaultMessage: 'Ascending',
-      }),
-    },
-    {
-      id: 'desc',
-      label: i18n.translate('explore.transformations.sortBy.descending', {
-        defaultMessage: 'Descending',
-      }),
-    },
-  ];
 
   return (
     <EuiFlexGroup direction="column" gutterSize="s">
@@ -96,8 +98,8 @@ export function createSortByTransformation(): TransformationInstance {
       order: 'asc',
     } as SortByConfig,
     hide: false,
-    transformationMethod: (data: any[], config: any) => {
-      const { field, order } = config as SortByConfig;
+    transformationMethod: (data: OpenSearchSearchHit[], config: SortByConfig) => {
+      const { field, order } = config;
 
       if (!field) {
         return data;
@@ -110,19 +112,16 @@ export function createSortByTransformation(): TransformationInstance {
         const valueA = get(a, `_source.${field}`);
         const valueB = get(b, `_source.${field}`);
 
-        // Handle null/undefined values - push to end
+        // null/undefined values - push to end
         if (valueA == null && valueB == null) return 0;
         if (valueA == null) return 1;
         if (valueB == null) return -1;
 
-        // Compare values
         let comparison = 0;
-        if (typeof valueA === 'string' && typeof valueB === 'string') {
-          comparison = valueA.localeCompare(valueB);
-        } else if (typeof valueA === 'number' && typeof valueB === 'number') {
+
+        if (typeof valueA === 'number' && typeof valueB === 'number') {
           comparison = valueA - valueB;
         } else {
-          // Fallback: convert to string and compare
           comparison = String(valueA).localeCompare(String(valueB));
         }
 
@@ -130,13 +129,6 @@ export function createSortByTransformation(): TransformationInstance {
       });
 
       return sorted;
-    },
-    resetConfig: (config: SortByConfig, availableFieldNames: Set<string>) => {
-      const c = { ...config };
-      if (c.field && !availableFieldNames.has(c.field)) {
-        return { ...c, field: undefined, value: '' };
-      }
-      return c;
     },
     Editor: SortByEditor,
   };

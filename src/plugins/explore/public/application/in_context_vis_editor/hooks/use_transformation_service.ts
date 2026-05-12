@@ -11,12 +11,12 @@ import { filterTransformationDefinition } from '../data_transformations/transfor
 import { addFieldTransformationDefinition } from '../data_transformations/transformations/add_field_transformation';
 import { filterFieldsTransformationDefinition } from '../data_transformations/transformations/filter_fields_transformation';
 import { convertFieldTypeTransformationDefinition } from '../data_transformations/transformations/convert_field_type_transformation';
-import { reduceTransformationDefinition } from '../data_transformations/transformations/reduce_transformation';
 import { groupByTransformationDefinition } from '../data_transformations/transformations/group_by_transformation';
 import { extractFieldsTransformationDefinition } from '../data_transformations/transformations/extract_fields_transformation';
 import { useQueryBuilderState } from './use_query_builder_state';
+import { useVisualizationBuilder } from './use_visualization_builder';
 import { getServices } from '../../../services/services';
-import { UrlTransformationState } from '../data_transformations';
+import { TransformationInstance, UrlTransformationState } from '../data_transformations';
 
 let globalTransformationService: TransformationService | undefined;
 
@@ -24,6 +24,7 @@ export const useTransformationService = (
   savedTransformationPipeline?: UrlTransformationState[]
 ): TransformationService => {
   const { queryBuilder } = useQueryBuilderState();
+  const { visualizationBuilderForEditor: visualizationBuilder } = useVisualizationBuilder();
 
   const transformationService = useMemo(() => {
     if (globalTransformationService) {
@@ -38,7 +39,6 @@ export const useTransformationService = (
     service.registerDefinition(addFieldTransformationDefinition);
     service.registerDefinition(filterFieldsTransformationDefinition);
     service.registerDefinition(convertFieldTypeTransformationDefinition);
-    service.registerDefinition(reduceTransformationDefinition);
     service.registerDefinition(groupByTransformationDefinition);
     service.registerDefinition(extractFieldsTransformationDefinition);
 
@@ -46,17 +46,20 @@ export const useTransformationService = (
     return service;
   }, []);
 
-  // set service to QueryBuilder
+  // set transformation service with VisualizationBuilder.
   useEffect(() => {
     if (!transformationService) return;
-    queryBuilder.setTransformationService(transformationService);
+    visualizationBuilder.setTransformationService(transformationService);
+    // Clear the pipeline when the user switches datasets
+    queryBuilder.setOnDatasetChanged(() => transformationService.clearPipeline());
+    // Mark editor dirty whenever the pipeline changes
     const subscription = transformationService.pipeline$.subscribe(() => {
       queryBuilder.updateQueryEditorState({ isQueryEditorDirty: true });
     });
     return () => subscription.unsubscribe();
-  }, [queryBuilder, transformationService]);
+  }, [queryBuilder, visualizationBuilder, transformationService]);
 
-  // init URL sync once on mount — before any restore so URL state is available
+  // init URL sync
   useEffect(() => {
     const { osdUrlStateStorage } = getServices();
     if (osdUrlStateStorage) {
@@ -64,11 +67,11 @@ export const useTransformationService = (
     }
   }, [transformationService]);
 
-  // Restore saved pipeline when it arrives
+  // Restore saved pipeline when it arrives from the saved object
   useEffect(() => {
     if (!savedTransformationPipeline || savedTransformationPipeline.length === 0) return;
 
-    const restoredPipeline: any[] = [];
+    const restoredPipeline: TransformationInstance[] = [];
     for (const item of savedTransformationPipeline) {
       const definition = transformationService.getDefinition(item.definitionId);
       if (definition) {

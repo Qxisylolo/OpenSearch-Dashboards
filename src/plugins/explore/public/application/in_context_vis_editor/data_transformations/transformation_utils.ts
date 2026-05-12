@@ -41,7 +41,21 @@ export function toggleTransformationHide(
   );
 }
 
-// Derive schema from current rows, preserving original types and inferring new ones.
+// infer type for derived columns, currently can only be string, number or date
+function inferType(val: unknown): string {
+  if (typeof val === 'number') {
+    return Number.isInteger(val) ? 'integer' : 'double';
+  }
+  if (typeof val === 'string' && val.length > 0 && !isNaN(Date.parse(val)) && isNaN(Number(val))) {
+    return 'date';
+  }
+  if (typeof val === 'boolean') {
+    return 'boolean';
+  }
+  return 'string';
+}
+
+// derive schema from current rows, preserving original types and inferring new added ones.
 export function deriveSchemaFromRows(
   rows: OpenSearchSearchHit[],
   originalSchema: Array<{ name?: string; type?: string }>
@@ -58,8 +72,7 @@ export function deriveSchemaFromRows(
       const val = firstSource[key];
       extras.push({
         name: key,
-        // currentlty, add fields transform only support numerical fields
-        type: typeof val === 'number' && Number.isInteger(val) ? 'integer' : 'double',
+        type: inferType(val),
       });
     }
   }

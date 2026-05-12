@@ -16,7 +16,7 @@ export {
   addTransformation,
   removeTransformation,
   updateTransformationConfig,
-} from './registry_utils';
+} from './transformation_utils';
 export {
   createLimitTransformation,
   limitTransformationDefinition,
@@ -37,10 +37,6 @@ export {
   createConvertFieldTypeTransformation,
   convertFieldTypeTransformationDefinition,
 } from './transformations/convert_field_type_transformation';
-export {
-  createReduceTransformation,
-  reduceTransformationDefinition,
-} from './transformations/reduce_transformation';
 export {
   createGroupByTransformation,
   groupByTransformationDefinition,

@@ -7,7 +7,6 @@ import { useMemo } from 'react';
 import { useSavedExplore } from '../../../application/utils/hooks/use_saved_explore';
 import { useCurrentExploreId } from '../hooks/use_explore_id';
 import { QueryState } from '../query_builder/query_builder';
-import { UrlTransformationState } from '../data_transformations';
 
 export const useInitialSaveExplore = () => {
   const exploreId = useCurrentExploreId();
@@ -20,14 +19,15 @@ export const useInitialSaveExplore = () => {
     return searchSource.query;
   }, [savedExplore]);
 
-  const savedVisConfig = useMemo(() => {
-    if (!savedExplore?.visualization) return undefined;
-    return JSON.parse(savedExplore.visualization);
-  }, [savedExplore]);
-
-  const savedTransformationPipeline: UrlTransformationState[] = useMemo(() => {
-    if (!savedExplore?.dataTransformationJSON) return undefined;
-    return JSON.parse(savedExplore.dataTransformationJSON);
+  // parse saved vis state and transformation from saved explore
+  const { savedVisConfig, savedTransformationPipeline } = useMemo(() => {
+    if (!savedExplore?.visualization)
+      return { savedVisConfig: undefined, savedTransformationPipeline: undefined };
+    const parsedVisualization = JSON.parse(savedExplore.visualization);
+    return {
+      savedVisConfig: parsedVisualization,
+      savedTransformationPipeline: JSON.parse(parsedVisualization?.dataTransformationJSON),
+    };
   }, [savedExplore]);
 
   return {

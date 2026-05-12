@@ -26,7 +26,7 @@ export function createSavedExploreClass(services: SavedObjectOpenSearchDashboard
       type: 'text',
       visualization: 'text',
       uiState: 'text',
-      dataTransformationJSON: 'text',
+      // dataTransformationJSON: 'text',
     };
     // Order these fields to the top, the rest are alphabetical
     public static fieldOrder = ['title', 'description'];
@@ -49,7 +49,7 @@ export function createSavedExploreClass(services: SavedObjectOpenSearchDashboard
           type: 'text',
           visualization: 'text',
           uiState: 'text',
-          dataTransformationJSON: 'text',
+          // dataTransformationJSON: 'text',
         },
         searchSource: true,
         defaults: {
@@ -62,7 +62,7 @@ export function createSavedExploreClass(services: SavedObjectOpenSearchDashboard
           type: '',
           visualization: '',
           uiState: '',
-          dataTransformationJSON: '',
+          // dataTransformationJSON: '',
         },
       });
       this.showInRecentlyAccessed = true;

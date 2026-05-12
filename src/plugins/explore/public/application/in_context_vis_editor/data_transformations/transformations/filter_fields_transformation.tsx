@@ -7,8 +7,9 @@ import { useCallback, useEffect } from 'react';
 import uuid from 'uuid';
 import { EuiButtonGroup, EuiFlexGroup, EuiFlexItem, EuiFormRow } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
-import { TransformationInstance, TransformationDefinition, FieldSchema } from '../types';
+import { TransformationInstance, TransformationDefinition, FieldSchema } from '../index';
 import { FieldSelector } from '../field_selector';
+import { OpenSearchSearchHit } from '../../../../types/doc_views_types';
 
 type FilterFieldsMode = 'include' | 'exclude';
 
@@ -33,7 +34,7 @@ const FilterFieldsEditor = ({
     [config, onChange]
   );
 
-  // Remove any selected fields that no longer exist in availableFields
+  // Reset field if it no longer exists in availableFields
   useEffect(() => {
     if (availableFields.length === 0) return;
     const availableNames = new Set(availableFields.map((f) => f.name));
@@ -41,6 +42,8 @@ const FilterFieldsEditor = ({
     if (valid.length !== config.fieldOptions.length) {
       onChange({ ...config, fieldOptions: valid });
     }
+    // this effect should only run when availableFields changes (upstream schema change),
+    // only for config state cleanup, not on every config edit.
   }, [availableFields]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const modeOptions = [
@@ -101,26 +104,20 @@ export function createFilterFieldsTransformation(): TransformationInstance {
       fieldOptions: [],
     } as FilterFieldsConfig,
     hide: false,
-    transformationMethod: (data: any[], config: any) => {
-      const c = config as FilterFieldsConfig;
+    transformationMethod: (data: OpenSearchSearchHit[], config: FilterFieldsConfig) => {
+      if (!isConfigComplete(config)) return data;
 
-      if (!isConfigComplete(c)) return data;
-
-      const fieldNames = new Set(c.fieldOptions.map((f) => f.name));
+      const fieldNames = new Set(config.fieldOptions.map((f) => f.name));
 
       return data.map((row) => {
         const source = row._source as Record<string, unknown>;
         const newSource =
-          c.mode === 'include'
+          config.mode === 'include'
             ? Object.fromEntries(Object.entries(source).filter(([key]) => fieldNames.has(key)))
             : Object.fromEntries(Object.entries(source).filter(([key]) => !fieldNames.has(key)));
 
         return { ...row, _source: newSource };
       });
-    },
-    resetConfig: (config: any, availableFieldNames: Set<string>) => {
-      const c = config as FilterFieldsConfig;
-      return { ...c, fieldOptions: c.fieldOptions.filter((f) => availableFieldNames.has(f.name)) };
     },
     Editor: FilterFieldsEditor,
   };

@@ -8,6 +8,7 @@ import React from 'react';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { IOsdUrlStateStorage } from '../../../../../opensearch_dashboards_utils/public';
 import { VisFieldType } from '../../../components/visualizations/types';
+import { OpenSearchSearchHit } from '../../../types/doc_views_types';
 
 export interface FieldSchema {
   name: string;
@@ -21,22 +22,21 @@ export interface TransformationInstance {
   label: string;
   // User settings (e.g. { limit: 5 })
   config: any;
-  // if skip transformation during pipeline execution
+  // set true to skip transformation during pipeline execution
   hide: boolean;
-  // Core transformation method
-  transformationMethod: (data: any[], config: any) => any[];
-  // Config editor rendered inside TransformPanel
+  // core transformation method
+  transformationMethod: (data: OpenSearchSearchHit[], config: any) => OpenSearchSearchHit[];
+  // config editor
   Editor: React.ComponentType<{
     config: any;
     onChange: (newConfig: any) => void;
     availableFields: FieldSchema[];
   }>;
-  /**
-   * Optional: called after reorder to clear any field references that are no
-   * longer available at the new pipeline position.
-   * Returns a sanitized copy of the config.
-   */
-  resetConfig?: (config: any, availableFieldNames: Set<string>) => any;
+  // rechange schema types after transformation (e.g. convert field type)
+  transformSchema?: (
+    schema: Array<{ name?: string; type?: string }>,
+    config: any
+  ) => Array<{ name?: string; type?: string }>;
 }
 
 export type TransformationPipeline = TransformationInstance[];
@@ -45,6 +45,7 @@ export interface TransformationDefinition {
   // name of this transformation
   id: string;
   // sub-group (e.g. 'filter', 'format', 'aggregate')
+  // for future use to filter methods in group as methods grow
   type: string;
   label: string;
   description: string;
@@ -72,9 +73,12 @@ export interface ITransformationService {
 
   // execution
   applyPipeline(
-    rawRows: any[],
+    rawRows: OpenSearchSearchHit[],
     originalSchema?: Array<{ name?: string; type?: string }>
-  ): { rows: any[]; stageSchemas: Array<Array<{ name?: string; type?: string }>> };
+  ): {
+    rows: OpenSearchSearchHit[];
+    stageSchemas: Array<Array<{ name?: string; type?: string }>>;
+  };
 
   // URL persistence
   initUrlSync(urlStateStorage: IOsdUrlStateStorage): void;
@@ -180,6 +184,56 @@ export const dateOperatorOptions = [
     value: 'is_later_or_equal',
     text: i18n.translate('explore.transformations.filter.isLaterOrEqual', {
       defaultMessage: 'Is later or equal',
+    }),
+  },
+];
+
+// for add field method
+export const binaryOperatorOptions = [
+  { value: '+', text: '+' },
+  { value: '-', text: '-' },
+  { value: '*', text: '*' },
+  { value: '/', text: '/' },
+];
+
+export const unaryOperatorOptions = [
+  {
+    value: 'abs',
+    text: i18n.translate('explore.transformations.addField.abs', {
+      defaultMessage: 'Absolute value',
+    }),
+  },
+  {
+    value: 'ceil',
+    text: i18n.translate('explore.transformations.addField.ceil', { defaultMessage: 'Ceiling' }),
+  },
+  {
+    value: 'floor',
+    text: i18n.translate('explore.transformations.addField.floor', { defaultMessage: 'Floor' }),
+  },
+  {
+    value: 'round',
+    text: i18n.translate('explore.transformations.addField.round', { defaultMessage: 'Round' }),
+  },
+];
+
+export const modeToggleOptions = [
+  {
+    id: 'binary',
+    label: i18n.translate('explore.transformations.addField.binaryMode', {
+      defaultMessage: 'Binary',
+    }),
+  },
+  {
+    id: 'unary',
+    label: i18n.translate('explore.transformations.addField.unaryMode', {
+      defaultMessage: 'Unary',
+    }),
+  },
+  {
+    id: 'crossFields',
+    label: i18n.translate('explore.transformations.addField.crossFieldsMode', {
+      defaultMessage: 'Cross-field',
     }),
   },
 ];

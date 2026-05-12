@@ -19,8 +19,6 @@ import { ISearchResult } from '../../../application/utils/state_management/slice
 import { ExploreServices } from '../../../types';
 import { prepareQueryForLanguage } from '../../../application/utils/languages';
 import { IVariableInterpolationService } from '../../../../../dashboard/public';
-import { createNoOpTransformationService } from '../data_transformations/transformation_service';
-import { ITransformationService } from '../data_transformations/types';
 
 import { Dataset, DEFAULT_DATA, DataView, Query } from '../../../../../data/common';
 import {
@@ -136,19 +134,8 @@ export class QueryBuilder {
   private subscriptions = Array<Subscription>();
   private getServices: () => ExploreServices;
   private interpolationService?: IVariableInterpolationService;
-  private transformationService: ITransformationService = createNoOpTransformationService();
-  private transformationSubscription?: Subscription;
+  private onDatasetChangedCallback?: () => void;
   public lastExecutedInterpolatedQuery?: string;
-
-  /**
-   * Derived observable: resultState$ → applyPipeline → transformedResultState$
-   * Re-emits whenever raw results change OR the pipeline changes.
-   * VisualizationContainer subscribes to this instead of resultState$ directly.
-   */
-  public transformedResultState$ = new BehaviorSubject<QueryResultState>(undefined);
-
-  // Per-stage field schemas
-  public stageSchemas$ = new BehaviorSubject<Array<Array<{ name?: string; type?: string }>>>([]);
 
   constructor(getServices: () => ExploreServices) {
     this.getServices = getServices;
@@ -312,8 +299,11 @@ export class QueryBuilder {
           // sync dataset change
           // check isLanguageChanged and isInitialized for the initial sync
           if (isDatasetChanged || isLanguageChanged || !this.isInitialized) {
-            if (isDatasetChanged) {
-              this.transformationService.clearPipeline();
+            // Only clear the transformation pipeline when the user actively switches
+            // datasets after initialization — not on the initial load, where the
+            // "change" is just the empty default state resolving to the real dataset.
+            if (isDatasetChanged && this.isInitialized) {
+              this.onDatasetChangedCallback?.();
             }
             this.datasetView$.next({ ...this.datasetView$.getValue(), isLoading: true });
             return from(this.handleDatasetChange(newQuery.dataset));
@@ -612,54 +602,10 @@ export class QueryBuilder {
     this.interpolationService = service;
   }
 
-  setTransformationService(service: ITransformationService) {
-    this.transformationService = service;
-    // Rewire the derived stream whenever a new service is injected
-    this.setupTransformedResultState();
-  }
-
-  private setupTransformedResultState() {
-    if (this.transformationSubscription) {
-      this.transformationSubscription.unsubscribe();
-    }
-
-    this.transformationSubscription = combineLatest([
-      this.resultState$,
-      this.transformationService.pipeline$,
-    ])
-      .pipe(
-        map(([rawResult, pipeline]) => {
-          if (!rawResult) {
-            this.stageSchemas$.next([]);
-            return undefined;
-          }
-
-          const rawRows = rawResult.hits?.hits ?? [];
-          const originalSchema = rawResult.fieldSchema ?? [];
-
-          // execute pipeline and collect per-stage schemas
-          const { rows: transformedRows, stageSchemas } = this.transformationService.applyPipeline(
-            rawRows,
-            originalSchema
-          );
-
-          console.log('setupTransformedResultState rows', rawRows, stageSchemas, pipeline);
-
-          this.stageSchemas$.next(stageSchemas);
-
-          const finalSchema = stageSchemas[stageSchemas.length - 1];
-          return {
-            ...rawResult,
-            hits: { ...rawResult.hits, hits: transformedRows },
-            fieldSchema: finalSchema,
-          };
-        })
-      )
-      .subscribe((transformedResult) => {
-        this.transformedResultState$.next(transformedResult);
-      });
-
-    this.subscriptions.push(this.transformationSubscription);
+  // register a callback that fires when the dataset changes, for example,
+  // used to clear the transformation pipeline on dataset switch.
+  setOnDatasetChanged(callback: () => void) {
+    this.onDatasetChangedCallback = callback;
   }
 
   setEditorRef(editor: monaco.editor.IStandaloneCodeEditor | null) {
@@ -681,7 +627,6 @@ export class QueryBuilder {
     this.queryEditorState$.complete();
     this.queryState$.complete();
     this.resultState$.complete();
-    this.transformedResultState$.complete();
     this.datasetView$.complete();
     abortAllActiveQueries();
   }
@@ -696,8 +641,6 @@ export class QueryBuilder {
 
     this.queryEditorState$ = new BehaviorSubject<QueryEditorState>(initialQueryEditorState);
     this.resultState$ = new BehaviorSubject<QueryResultState>(undefined);
-    this.transformedResultState$ = new BehaviorSubject<QueryResultState>(undefined);
-    this.stageSchemas$ = new BehaviorSubject<Array<Array<{ name?: string; type?: string }>>>([]);
     this.datasetView$ = new BehaviorSubject<DatasetViewState>({
       dataView: undefined,
       isLoading: false,

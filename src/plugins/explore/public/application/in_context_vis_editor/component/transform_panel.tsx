@@ -26,7 +26,7 @@ import {
   TransformationService,
   FieldSchema,
 } from '../data_transformations';
-import { useQueryBuilderState } from '../hooks/use_query_builder_state';
+import { useVisualizationBuilder } from '../hooks/use_visualization_builder';
 import { FIELD_TYPE_MAP } from '../../../components/visualizations/constants';
 import { VisFieldType } from '../../../components/visualizations/types';
 
@@ -42,13 +42,11 @@ export const TransformPanel = ({
     transformationService.pipeline$.getValue()
   );
 
-  const { queryBuilder } = useQueryBuilderState();
+  const { visualizationBuilderForEditor: visualizationBuilder } = useVisualizationBuilder();
   const stageSchemas = useObservable(
-    queryBuilder.stageSchemas$,
-    queryBuilder.stageSchemas$.getValue()
+    visualizationBuilder.stageSchemas$,
+    visualizationBuilder.stageSchemas$.getValue()
   );
-
-  // console.log('stageSchemas', stageSchemas);
 
   const getAvailableFieldsForIndex = (index: number): FieldSchema[] => {
     const raw = stageSchemas[index] ?? [];
@@ -77,9 +75,7 @@ export const TransformPanel = ({
   const onDragEnd = ({ source, destination }: any) => {
     if (!source || !destination) return;
     const reordered = euiDragDropReorder(pipeline, source.index, destination.index);
-    const rawRows = queryBuilder.resultState$.getValue()?.hits?.hits ?? [];
-    const originalSchema = queryBuilder.resultState$.getValue()?.fieldSchema ?? [];
-    transformationService.reorderPipeline(reordered, rawRows, originalSchema);
+    transformationService.setPipeline(reordered);
   };
 
   return (
@@ -184,28 +180,21 @@ const TransformationCard = ({
         extraAction={
           <EuiFlexGroup gutterSize="xs" alignItems="center" responsive={false}>
             <EuiFlexItem grow={false}>
-              {/* hide button */}
               <EuiButtonIcon
                 iconType={instance.hide ? 'eyeClosed' : 'eye'}
                 color="text"
-                onClick={() => {
-                  onToggleHide(instance.instance_id);
-                }}
+                onClick={() => onToggleHide(instance.instance_id)}
                 data-test-subj={`transformHideButton-${instance.instance_id}`}
               />
             </EuiFlexItem>
-            {/* Remove button*/}
             <EuiFlexItem grow={false}>
               <EuiButtonIcon
                 iconType="trash"
                 color="text"
-                onClick={() => {
-                  onRemove(instance.instance_id);
-                }}
+                onClick={() => onRemove(instance.instance_id)}
                 data-test-subj={`transformRemoveButton-${instance.instance_id}`}
               />
             </EuiFlexItem>
-            {/* drag button */}
             <EuiFlexItem grow={false}>
               <span
                 {...dragHandleProps}
@@ -216,7 +205,7 @@ const TransformationCard = ({
                   marginLeft: '10px',
                 }}
               >
-                {/* dragVertical can not be displayed, use app as substitute */}
+                {/* drag icon can't be used, use icon app as a similar substitute  */}
                 <EuiIcon type="apps" />
               </span>
             </EuiFlexItem>
