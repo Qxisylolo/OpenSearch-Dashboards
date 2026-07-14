@@ -36,6 +36,7 @@ export interface AssistantActionContextValue {
   updateToolCallState: (id: string, state: Partial<ToolCallState>) => void;
   getActionRenderer: (name: string) => AssistantAction['render'] | undefined;
   shouldUseCustomRenderer: (name: string) => boolean;
+  getRenderPlacement: (name: string) => 'above' | 'below';
 }
 
 export const AssistantActionContext = createContext<AssistantActionContextValue | null>(null);
@@ -158,6 +159,14 @@ export function AssistantActionProvider({
     [actions]
   );
 
+  const getRenderPlacement = useCallback(
+    (name: string): 'above' | 'below' => {
+      const action = actions.get(name);
+      return action?.renderPlacement ?? 'above';
+    },
+    [actions]
+  );
+
   const getToolDefinitions = useCallback(() => {
     return Array.from(actions.values())
       .filter((action) => action.available !== 'disabled')
@@ -180,6 +189,7 @@ export function AssistantActionProvider({
         updateToolCallState,
         getActionRenderer,
         shouldUseCustomRenderer,
+        getRenderPlacement,
       }}
     >
       {children}

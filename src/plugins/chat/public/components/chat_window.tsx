@@ -21,6 +21,7 @@ import { useChatContext } from '../contexts/chat_context';
 import { ChatEventHandler } from '../services/chat_event_handler';
 import { AssistantActionService } from '../../../context_provider/public';
 import { ConfirmationRequest } from '../services/confirmation_service';
+import { AskUserRequest } from '../services/human_input_service';
 import { type Event as ChatEvent } from '../../common/events';
 import type { InputContent, Message, SystemMessage, UserMessage } from '../../common/types';
 import { ChatLayoutMode } from '../types';
@@ -65,7 +66,7 @@ export const ChatWindow = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
 const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
   ({ layoutMode = ChatLayoutMode.SIDECAR, onClose }, ref) => {
     const service = AssistantActionService.getInstance();
-    const { chatService, confirmationService } = useChatContext();
+    const { chatService, confirmationService, humanInputService } = useChatContext();
     const { services } = useOpenSearchDashboards<{ core: CoreStart }>();
     const toasts = services.core?.notifications?.toasts;
     const [timeline, setTimeline] = useState<Message[]>([]);
@@ -75,6 +76,7 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
     const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationRequest | null>(
       null
     );
+    const [pendingAskUser, setPendingAskUser] = useState<AskUserRequest | null>(null);
     const [showHistory, setShowHistory] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const handleSendRef = useRef<typeof handleSend>();
@@ -144,6 +146,16 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
 
       return () => subscription.unsubscribe();
     }, [confirmationService]);
+
+    // Track a pending ask_user question only to lock the composer; the question
+    // UI is rendered inline at its tool-call position by InlineAskUser, not here.
+    useEffect(() => {
+      const subscription = humanInputService.getPending$().subscribe((requests) => {
+        setPendingAskUser(requests.length > 0 ? requests[0] : null);
+      });
+
+      return () => subscription.unsubscribe();
+    }, [humanInputService]);
 
     // Get telemetry recorder from core services
     const telemetryRecorder = useMemo(
@@ -598,13 +610,22 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
       setTimelineSynced([]);
       setCurrentRunId(null);
       setPendingConfirmation(null);
+      setPendingAskUser(null);
       setPendingMessage(null);
       setAvailableDataSources([]);
       isValidatingRef.current = false;
       setIsValidating(false);
       confirmationService.cleanAll();
+      humanInputService.cleanAll();
       setShowHistory(false);
-    }, [chatService, confirmationService, eventHandler, stopStreaming, setTimelineSynced]);
+    }, [
+      chatService,
+      confirmationService,
+      eventHandler,
+      humanInputService,
+      stopStreaming,
+      setTimelineSynced,
+    ]);
 
     const handleStop = useCallback(() => {
       stopStreaming();
@@ -700,7 +721,9 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
             eventHandler.clearState();
             setCurrentRunId(null);
             setPendingConfirmation(null);
+            setPendingAskUser(null);
             confirmationService.cleanAll();
+            humanInputService.cleanAll();
             setShowHistory(false);
             setIsLoading(false);
 
@@ -738,7 +761,7 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
           }
         }
       },
-      [chatService, eventHandler, confirmationService, toasts, stopStreaming]
+      [chatService, eventHandler, confirmationService, humanInputService, toasts, stopStreaming]
     );
 
     const windowInstance = useMemo<ChatWindowInstance>(
@@ -873,6 +896,7 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
                 hasActiveToolCalls ||
                 hasPendingResend ||
                 !!pendingConfirmation ||
+                !!pendingAskUser ||
                 availableDataSources.length > 0 ||
                 isValidating
               }
@@ -881,19 +905,23 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
                   ? i18n.translate('chat.input.selectDataSource', {
                       defaultMessage: 'Select a data source to continue...',
                     })
-                  : pendingConfirmation
-                    ? i18n.translate('chat.input.waitingForConfirmation', {
-                        defaultMessage: 'Waiting for confirmation...',
+                  : pendingAskUser
+                    ? i18n.translate('chat.input.waitingForAnswer', {
+                        defaultMessage: 'Answer the question above to continue...',
                       })
-                    : hasPendingResend
-                      ? i18n.translate('chat.input.pendingResend', {
-                          defaultMessage: 'Resend the tool result to continue...',
+                    : pendingConfirmation
+                      ? i18n.translate('chat.input.waitingForConfirmation', {
+                          defaultMessage: 'Waiting for confirmation...',
                         })
-                      : hasActiveToolCalls
-                        ? i18n.translate('chat.input.waitingForToolExecution', {
-                            defaultMessage: 'Waiting for tool execution...',
+                      : hasPendingResend
+                        ? i18n.translate('chat.input.pendingResend', {
+                            defaultMessage: 'Resend the tool result to continue...',
                           })
-                        : undefined
+                        : hasActiveToolCalls
+                          ? i18n.translate('chat.input.waitingForToolExecution', {
+                              defaultMessage: 'Waiting for tool execution...',
+                            })
+                          : undefined
               }
               onInputChange={setInput}
               onSend={handleSend}
