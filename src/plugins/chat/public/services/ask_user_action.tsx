@@ -104,15 +104,15 @@ export const createAskUserAction = (
       allowFreeText: args.allowFreeText,
     });
 
-    // Torn down (conversation reset) — signal cancellation so the executor
-    // skips dispatching a result. See tryExecuteRegisteredAction.
+    // Torn down (conversation reset) — cancel so the executor skips dispatch.
     if (response.cancelled) {
       return { cancelled: true };
     }
-    // Explicit "skip" — a real answer the assistant should see.
+    // Echo `question` so the result self-anchors to which question it answers,
+    // instead of the model matching a bare answer back to the toolUse by position.
     if (response.declined) {
-      return { answered: false, declined: true };
+      return { answered: false, declined: true, question: args.prompt };
     }
-    return { answered: true, answer: response.answer };
+    return { answered: true, question: args.prompt, answer: response.answer };
   },
 });

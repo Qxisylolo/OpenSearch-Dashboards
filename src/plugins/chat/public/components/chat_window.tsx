@@ -22,7 +22,7 @@ import { ChatEventHandler } from '../services/chat_event_handler';
 import { AssistantActionService } from '../../../context_provider/public';
 import { ConfirmationRequest } from '../services/confirmation_service';
 import { AskUserRequest } from '../services/human_input_service';
-import { type Event as ChatEvent } from '../../common/events';
+import { type Event as ChatEvent, EventType } from '../../common/events';
 import type { InputContent, Message, SystemMessage, UserMessage } from '../../common/types';
 import { ChatLayoutMode } from '../types';
 import { ChatContainer } from './chat_container';
@@ -727,13 +727,28 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
             setShowHistory(false);
             setIsLoading(false);
 
-            // Replay all events to reconstruct the conversation
+            // Replay all events to reconstruct the conversation.
+            //
+            // TOOL_CALL_END is dispatched WITHOUT awaiting. A halt-type frontend
+            // tool (e.g. `ask_user`) blocks inside handleToolCallEnd on
+            // humanInputService.ask() until the user answers, which never happens
+            // during replay. Awaiting it would stall the loop on the first such
+            // tool, so the synthetic events for the remaining parallel tool calls
+            // would never be consumed — only one ask_user card would appear. This
+            // mirrors the live path, where the RxJS subscriber's async `next` does
+            // not await handleEvent, letting parallel tool calls register
+            // concurrently. All other events stay awaited to preserve order.
             for (const event of events) {
               // Check abort signal during replay
               if (abortController.signal.aborted) {
                 return;
               }
-              await eventHandler.handleEvent(event);
+              if (event.type === EventType.TOOL_CALL_END) {
+                // Fire-and-forget: let parallel halt-type tools register together.
+                void eventHandler.handleEvent(event);
+              } else {
+                await eventHandler.handleEvent(event);
+              }
             }
           }
         } catch (error: any) {

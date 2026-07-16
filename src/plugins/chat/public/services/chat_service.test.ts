@@ -1127,6 +1127,270 @@ describe('ChatService', () => {
     });
   });
 
+  describe('sendToolResults (parallel batch)', () => {
+    // Snapshot whose assistant message carries one toolCall per id. waitForToolCallSync
+    // polls this to decide `synced` vs `result_already_exists`.
+    const createMockMessagesSnapshotMulti = (toolCallIds: string[]) => [
+      {
+        type: 'MESSAGES_SNAPSHOT',
+        timestamp: Date.now(),
+        messages: [
+          {
+            role: 'user',
+            id: 'user-msg-1',
+            content: 'Test message',
+          },
+          {
+            role: 'assistant',
+            id: 'assistant-msg-1',
+            content: 'Response with parallel tool calls',
+            toolCalls: toolCallIds.map((id) => ({
+              id,
+              type: 'function',
+              function: { name: 'test_tool', arguments: '{}' },
+            })),
+          },
+        ],
+      },
+    ];
+
+    // Snapshot that already contains a persisted tool result for `toolCallId`
+    // (another window won the race) alongside the synced tool call.
+    const createSnapshotWithToolResult = (toolCallIds: string[], resolvedId: string) => [
+      {
+        type: 'MESSAGES_SNAPSHOT',
+        timestamp: Date.now(),
+        messages: [
+          { role: 'user', id: 'user-msg-1', content: 'Run it' },
+          {
+            role: 'assistant',
+            id: 'assistant-msg-1',
+            content: 'Running',
+            toolCalls: toolCallIds.map((id) => ({
+              id,
+              type: 'function',
+              function: { name: 'test_tool', arguments: '{}' },
+            })),
+          },
+          {
+            role: 'tool',
+            id: 'tool-msg-1',
+            content: '"already done"',
+            toolCallId: resolvedId,
+          },
+        ],
+      },
+    ];
+
+    beforeEach(() => {
+      // Initialize a thread first - required for sendToolResults
+      chatService.newThread();
+      (global as any).window = {
+        assistantContextStore: {
+          getAllContexts: jest.fn().mockReturnValue([]),
+          getBackendFormattedContexts: jest.fn().mockReturnValue([]),
+        },
+      };
+
+      // Default: includeFullHistory false so the sync-poll path is exercised.
+      mockCoreChatService.getMemoryProvider = jest
+        .fn()
+        .mockReturnValue({ includeFullHistory: false });
+    });
+
+    afterEach(() => {
+      delete (global as any).window;
+    });
+
+    it('should dispatch a batch of two tool results in a single run', async () => {
+      const mockObservable = new Observable<BaseEvent>();
+      mockAgent.runAgent.mockReturnValue(mockObservable);
+
+      const items = [
+        { toolCallId: 'tool-A', result: { ok: 1 } },
+        { toolCallId: 'tool-B', result: 'txt' },
+      ];
+
+      // Snapshot contains both tool calls; the last id (tool-B) drives the sync check.
+      chatService.conversationHistoryService.getConversation = jest
+        .fn()
+        .mockResolvedValue(createMockMessagesSnapshotMulti(['tool-A', 'tool-B']));
+
+      const response = await chatService.sendToolResults(items, []);
+
+      // One ToolMessage per item, in order, with the correct role/toolCallId/content.
+      expect(response.toolMessages).toHaveLength(2);
+      expect(response.toolMessages[0]).toEqual({
+        id: expect.stringMatching(/^msg-\d+-[a-z0-9]{9}$/),
+        role: 'tool',
+        content: JSON.stringify({ ok: 1 }), // object -> JSON.stringify
+        toolCallId: 'tool-A',
+      });
+      expect(response.toolMessages[1]).toEqual({
+        id: expect.stringMatching(/^msg-\d+-[a-z0-9]{9}$/),
+        role: 'tool',
+        content: 'txt', // string -> as-is
+        toolCallId: 'tool-B',
+      });
+
+      expect(response.skipped).toBeUndefined();
+      expect(response.observable).toBeDefined();
+
+      // Single continuation run carrying both tool messages in order.
+      expect(mockAgent.runAgent).toHaveBeenCalledTimes(1);
+      expect(mockAgent.runAgent).toHaveBeenCalledWith(
+        {
+          threadId: expect.stringMatching(/^thread-\d+-[a-z0-9]{9}$/),
+          runId: expect.stringMatching(/^run-\d+-[a-z0-9]{9}$/),
+          messages: [response.toolMessages[0], response.toolMessages[1]],
+          tools: [],
+          context: [],
+          state: {},
+          forwardedProps: {},
+        },
+        undefined
+      );
+    });
+
+    it('should abort the halted main run BEFORE the sync-poll window, not just at dispatch', async () => {
+      // Same regression guard as the singular path: one abort() must supersede the halted
+      // main run up front, before waitForToolCallSync polls, so the runs never overlap.
+      const callOrder: string[] = [];
+      mockAgent.abort.mockImplementation(() => {
+        callOrder.push('abort');
+      });
+      const mockObservable = new Observable<BaseEvent>();
+      mockAgent.runAgent.mockImplementation(() => {
+        callOrder.push('runAgent');
+        return mockObservable;
+      });
+
+      chatService.conversationHistoryService.getConversation = jest
+        .fn()
+        .mockResolvedValue(createMockMessagesSnapshotMulti(['tool-A', 'tool-B']));
+
+      await chatService.sendToolResults(
+        [
+          { toolCallId: 'tool-A', result: { ok: 1 } },
+          { toolCallId: 'tool-B', result: { ok: 2 } },
+        ],
+        []
+      );
+
+      expect(mockAgent.abort).toHaveBeenCalled();
+      expect(callOrder[0]).toBe('abort');
+      expect(callOrder.indexOf('abort')).toBeLessThan(callOrder.indexOf('runAgent'));
+    });
+
+    it('should sync-poll on the LAST item id only and still dispatch when it is present', async () => {
+      const mockObservable = new Observable<BaseEvent>();
+      mockAgent.runAgent.mockReturnValue(mockObservable);
+
+      // Snapshot only carries the LAST item's tool call (tool-B). Sync should still
+      // succeed because waitForToolCallSync keys off the last id for the batch.
+      const getConversation = jest
+        .fn()
+        .mockResolvedValue(createMockMessagesSnapshotMulti(['tool-B']));
+      chatService.conversationHistoryService.getConversation = getConversation;
+
+      const response = await chatService.sendToolResults(
+        [
+          { toolCallId: 'tool-A', result: { ok: 1 } },
+          { toolCallId: 'tool-B', result: { ok: 2 } },
+        ],
+        []
+      );
+
+      expect(getConversation).toHaveBeenCalled();
+      expect(mockAgent.runAgent).toHaveBeenCalledTimes(1);
+      expect(response.skipped).toBeUndefined();
+      expect(response.toolMessages).toHaveLength(2);
+    });
+
+    it('should skip dispatch with reason no_thread_id when thread ID is not set', async () => {
+      // Fresh service without calling newThread, mirroring the singular no_thread_id test.
+      const newService = new ChatService(mockUiSettings, mockCoreChatService);
+      mockCoreChatService.getThreadId.mockReturnValue(undefined);
+
+      const items = [
+        { toolCallId: 'tool-A', result: 'a' },
+        { toolCallId: 'tool-B', result: 'b' },
+      ];
+
+      const response = await newService.sendToolResults(items, []);
+
+      expect(response.skipped).toEqual({ reason: 'no_thread_id' });
+      expect(mockAgent.runAgent).not.toHaveBeenCalled();
+
+      // toolMessages are still returned (one per item) even on skip.
+      expect(response.toolMessages).toHaveLength(2);
+      expect(response.toolMessages[0]).toEqual({
+        id: expect.stringMatching(/^msg-\d+-[a-z0-9]{9}$/),
+        role: 'tool',
+        content: 'a',
+        toolCallId: 'tool-A',
+      });
+      expect(response.toolMessages[1]).toEqual({
+        id: expect.stringMatching(/^msg-\d+-[a-z0-9]{9}$/),
+        role: 'tool',
+        content: 'b',
+        toolCallId: 'tool-B',
+      });
+    });
+
+    it('should skip dispatch with reason result_already_exists when the last id already has a tool result', async () => {
+      // Snapshot already carries a role:'tool' message for the last item's id (tool-B):
+      // another window persisted the result first.
+      chatService.conversationHistoryService.getConversation = jest
+        .fn()
+        .mockResolvedValue(createSnapshotWithToolResult(['tool-A', 'tool-B'], 'tool-B'));
+
+      const items = [
+        { toolCallId: 'tool-A', result: { ok: 1 } },
+        { toolCallId: 'tool-B', result: { ok: 2 } },
+      ];
+
+      const response = await chatService.sendToolResults(items, []);
+
+      expect(mockAgent.runAgent).not.toHaveBeenCalled();
+      expect(response.skipped).toEqual({ reason: 'result_already_exists' });
+      expect(response.toolMessages).toHaveLength(2);
+    });
+
+    it('should include full history and skip the sync wait when includeFullHistory is true', async () => {
+      const mockObservable = new Observable<BaseEvent>();
+      mockAgent.runAgent.mockReturnValue(mockObservable);
+
+      // includeFullHistory true: messages are passed directly so no sync poll is needed.
+      mockCoreChatService.getMemoryProvider = jest
+        .fn()
+        .mockReturnValue({ includeFullHistory: true });
+
+      // getConversation should NOT be consulted when full history is included.
+      chatService.conversationHistoryService.getConversation = jest.fn();
+
+      const messages: Message[] = [{ id: 'msg-1', role: 'user', content: 'Previous message' }];
+      const items = [
+        { toolCallId: 'tool-A', result: { ok: 1 } },
+        { toolCallId: 'tool-B', result: 'txt' },
+      ];
+
+      const response = await chatService.sendToolResults(items, messages);
+
+      expect(chatService.conversationHistoryService.getConversation).not.toHaveBeenCalled();
+      expect(response.skipped).toBeUndefined();
+      expect(response.toolMessages).toHaveLength(2);
+
+      // messages = [...messages, ...toolMessages] when includeFullHistory is true.
+      expect(mockAgent.runAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: [...messages, response.toolMessages[0], response.toolMessages[1]],
+        }),
+        undefined
+      );
+    });
+  });
+
   describe('abort', () => {
     it('should call agent abort method', () => {
       chatService.abort();

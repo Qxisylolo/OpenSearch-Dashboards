@@ -1595,6 +1595,74 @@ describe('ChatWindow', () => {
       expect(calledTypes).toContain('TOOL_CALL_START');
     });
 
+    it('should not await TOOL_CALL_END during replay, so parallel halt-type tools all register', async () => {
+      // Regression for: reloading a thread with several parallel `ask_user` calls showed only
+      // one card. A halt-type tool blocks inside handleToolCallEnd on humanInputService.ask()
+      // forever during replay; awaiting its TOOL_CALL_END stalled the loop so the synthetic
+      // events for the other parallel calls were never consumed. TOOL_CALL_END must be
+      // fire-and-forget so every parallel tool's synthetic events get dispatched.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { ChatEventHandler } = require('../services/chat_event_handler');
+      const mockClearState = jest.fn();
+      // First TOOL_CALL_END blocks forever (mimics ask_user awaiting a user answer).
+      const mockHandleEvent = jest.fn().mockImplementation((event: any) => {
+        if (event?.type === 'TOOL_CALL_END') {
+          return new Promise(() => {}); // never resolves
+        }
+        return Promise.resolve();
+      });
+      ChatEventHandler.mockImplementation(() => ({
+        handleEvent: mockHandleEvent,
+        clearState: mockClearState,
+        cancelToolResultDispatch: jest.fn(),
+      }));
+
+      // Two parallel ask_user calls, each as START/ARGS/END (as injectUnfinishedToolCallEvents emits).
+      const mockEvents = [
+        { type: 'MESSAGES_SNAPSHOT', messages: [{ id: 'u1', role: 'user', content: 'Hi' }], timestamp: Date.now() },
+        { type: 'TOOL_CALL_START', toolCallId: 'tc-A', toolCallName: 'ask_user', timestamp: Date.now() },
+        { type: 'TOOL_CALL_ARGS', toolCallId: 'tc-A', delta: '{}', timestamp: Date.now() },
+        { type: 'TOOL_CALL_END', toolCallId: 'tc-A', timestamp: Date.now() },
+        { type: 'TOOL_CALL_START', toolCallId: 'tc-B', toolCallName: 'ask_user', timestamp: Date.now() },
+        { type: 'TOOL_CALL_ARGS', toolCallId: 'tc-B', delta: '{}', timestamp: Date.now() },
+        { type: 'TOOL_CALL_END', toolCallId: 'tc-B', timestamp: Date.now() },
+      ];
+      // @ts-expect-error TS2345 TODO(ts-error): fixme
+      mockChatService.loadConversation.mockImplementation(async (threadId: string) => {
+        (mockChatService.getThreadId as jest.Mock).mockReturnValue(threadId);
+        return mockEvents;
+      });
+
+      const { getByLabelText, getByText } = renderWithContext(<ChatWindow onClose={jest.fn()} />);
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      const historyButton = getByLabelText('Show conversation history');
+      await act(async () => {
+        historyButton.click();
+      });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      const conversationItem = getByText('Test conversation');
+      await act(async () => {
+        conversationItem.click();
+      });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+
+      // Both tool calls' synthetic events must all be dispatched even though the first
+      // TOOL_CALL_END never resolves — proving the loop did not await it.
+      const calledTypes = mockHandleEvent.mock.calls.map((call: any) => call[0]?.type);
+      const calledIds = mockHandleEvent.mock.calls.map((call: any) => call[0]?.toolCallId);
+      expect(mockHandleEvent).toHaveBeenCalledTimes(mockEvents.length);
+      expect(calledTypes.filter((t: string) => t === 'TOOL_CALL_END')).toHaveLength(2);
+      expect(calledIds).toContain('tc-A');
+      expect(calledIds).toContain('tc-B');
+    });
+
     it('should cancel ongoing streaming when switching to another conversation', async () => {
       const ref = React.createRef<ChatWindowInstance>();
 

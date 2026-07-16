@@ -741,12 +741,26 @@ export class ChatService {
 
     // Continue the conversation with the tool result
     const observable = this.agent.runAgent(runInput, dataSourceId);
+    const trackedObservable = this.buildTrackedRunObservable(observable, requestId, signal);
 
-    // Wrap observable to track completion and honor the caller's abort
-    // signal. When the signal fires, we abort the underlying agent fetch and
-    // surface an AbortError to subscribers so they can distinguish a
-    // cancellation from a real stream error.
-    const trackedObservable = new Observable((subscriber: any) => {
+    this.events$ = trackedObservable;
+
+    return { observable: trackedObservable, toolMessage };
+  }
+
+  /**
+   * Wrap a run observable to track completion and honor the caller's abort
+   * signal. When the signal fires, we abort the underlying agent fetch and
+   * surface an AbortError to subscribers so they can distinguish a
+   * cancellation from a real stream error. Shared by the single- and
+   * batched-tool-result dispatch paths.
+   */
+  private buildTrackedRunObservable(
+    observable: any,
+    requestId: string,
+    signal?: AbortSignal
+  ): Observable<any> {
+    return new Observable((subscriber: any) => {
       // `settled` guards against emitting twice when the abort handler races
       // with the inner subscription's error/complete (aborting the agent
       // typically triggers both paths).
@@ -790,10 +804,96 @@ export class ChatService {
         subscription.unsubscribe();
       };
     });
+  }
+
+  /**
+   * Batched sibling of {@link sendToolResult}: sends several parallel frontend
+   * tool results in one continuation run (one `role=tool` message per
+   * `toolCallId`), keeping each `toolUse` adjacent to its `toolResult` and
+   * matching the memory store's fan-out shape. Since all calls belong to one
+   * assistant message, a single `abort()` + one sync-poll (on the last id)
+   * covers the batch. See PARALLEL_FRONTEND_TOOLS_DESIGN.md.
+   */
+  public async sendToolResults(
+    items: Array<{ toolCallId: string; result: any }>,
+    messages: Message[],
+    signal?: AbortSignal
+  ): Promise<{
+    observable: any;
+    toolMessages: ToolMessage[];
+    skipped?: {
+      reason: 'result_already_exists' | 'sync_timeout' | 'no_thread_id' | 'aborted';
+    };
+  }> {
+    const requestId = this.generateRequestId();
+    this.addActiveRequest(requestId);
+
+    const toolMessages: ToolMessage[] = items.map((item) => ({
+      id: this.generateMessageId(),
+      role: 'tool',
+      content: typeof item.result === 'string' ? item.result : JSON.stringify(item.result),
+      toolCallId: item.toolCallId,
+    }));
+
+    const skip = (
+      reason: 'result_already_exists' | 'sync_timeout' | 'no_thread_id' | 'aborted'
+    ) => {
+      this.removeActiveRequest(requestId);
+      return {
+        observable: new Observable((subscriber) => subscriber.complete()),
+        toolMessages,
+        skipped: { reason },
+      };
+    };
+
+    if (signal?.aborted) return skip('aborted');
+
+    const dataSourceId = await this.getWorkspaceAwareDataSourceId();
+
+    const contextStore = (window as any).assistantContextStore;
+    const allContexts = contextStore ? contextStore.getAllContexts() : [];
+    const context = allContexts.map((ctx: any) => ({
+      description: ctx.description,
+      value: typeof ctx.value === 'string' ? ctx.value : JSON.stringify(ctx.value),
+    }));
+
+    const includeFullHistory = this.conversationHistoryService.getMemoryProvider()
+      .includeFullHistory;
+    const mappedMessages = includeFullHistory ? [...messages, ...toolMessages] : [...toolMessages];
+
+    const threadId = this.getThreadId();
+    if (!threadId) return skip('no_thread_id');
+
+    const runInput: RunAgentInput = {
+      threadId,
+      runId: this.generateRunId(),
+      messages: mappedMessages,
+      tools: this.availableTools || [],
+      context,
+      state: {},
+      forwardedProps: {},
+    };
+
+    // Abort the halted main run before the sync-poll window (see sendToolResult).
+    this.agent.abort();
+
+    if (!includeFullHistory) {
+      // Last id synced ⇒ the whole batch's toolUse is persisted.
+      const lastId = items[items.length - 1].toolCallId;
+      const syncResult = await this.waitForToolCallSync(lastId, undefined, undefined, signal);
+      if (!syncResult.shouldSend) {
+        return skip(syncResult.reason as Exclude<typeof syncResult.reason, 'synced'>);
+      }
+    }
+
+    if (signal?.aborted) return skip('aborted');
+
+    const observable = this.agent.runAgent(runInput, dataSourceId);
+    const trackedObservable = this.buildTrackedRunObservable(observable, requestId, signal);
 
     this.events$ = trackedObservable;
 
-    return { observable: trackedObservable, toolMessage };
+    return { observable: trackedObservable, toolMessages };
   }
 
   public abort(): void {
