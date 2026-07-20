@@ -436,6 +436,7 @@ export class ChatEventHandler {
       if (result.cancelled) {
         this.batchExpected.delete(toolCallId);
         this.pendingToolCalls.delete(toolCallId);
+        this.assistantActionService.updateToolCallState(toolCallId, { status: 'failed' });
         this.maybeFlushBatch();
         return;
       }
@@ -611,7 +612,13 @@ export class ChatEventHandler {
   private handleRunError(event: any): void {
     this.runErrorOccurred = true;
 
-    // Run failed — discard any half-gathered batch.
+    // Run failed — mark any pending batch members as failed so their tool-call
+    // state is cleaned up (prevents a stale 'executing' from locking the composer).
+    for (const id of this.batchExpected) {
+      if (!this.batchResults.has(id)) {
+        this.assistantActionService.updateToolCallState(id, { status: 'failed' });
+      }
+    }
     this.batchExpected.clear();
     this.batchResults.clear();
     this.batchSealed = false;
@@ -1072,6 +1079,38 @@ export class ChatEventHandler {
 
     // Reset streaming state
     this.onStreamingStateChange(false);
+  }
+
+  /**
+   * Handle abnormal stream termination (connection drop or error without
+   * RUN_FINISHED). If the batch was already sealed and flushed by a normal
+   * RUN_FINISHED this is a no-op. Otherwise, marks still-pending batch
+   * members as failed so the composer is not permanently locked, and
+   * attempts to flush any completed results.
+   */
+  handleStreamTermination(): void {
+    if (this.batchSealed || this.batchExpected.size === 0) return;
+
+    // Mark any batch members that never resolved as failed
+    for (const id of this.batchExpected) {
+      if (!this.batchResults.has(id)) {
+        this.assistantActionService.updateToolCallState(id, { status: 'failed' });
+      }
+    }
+
+    // Seal the batch so any already-buffered results can flush. Members
+    // whose results are still missing will simply be absent from the
+    // dispatch (they were already marked failed above).
+    this.batchSealed = true;
+    this.maybeFlushBatch();
+
+    // If maybeFlushBatch couldn't flush (some members still pending),
+    // discard the batch entirely — no partial dispatch on stream error.
+    if (this.batchExpected.size > 0) {
+      this.batchExpected.clear();
+      this.batchResults.clear();
+      this.batchSealed = false;
+    }
   }
 
   /**

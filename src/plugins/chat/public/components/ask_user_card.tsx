@@ -81,7 +81,7 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({ request, onAnswer, onD
             value={textValue}
             onChange={(e) => setTextValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') submitText();
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) submitText();
             }}
             placeholder={i18n.translate('chat.askUser.textPlaceholder', {
               defaultMessage: 'Type your answer...',
@@ -223,9 +223,7 @@ export const InlineAskUser: React.FC<InlineAskUserProps> = ({
   answer,
 }) => {
   const pending = useObservable(humanInputService.getPending$(), humanInputService.getPending());
-  const request = toolCallId
-    ? pending.find((req) => req.toolCallId === toolCallId)
-    : undefined;
+  const request = toolCallId ? pending.find((req) => req.toolCallId === toolCallId) : undefined;
 
   // Prefer the locally-recorded answer (set synchronously on click) so it shows
   // immediately; fall back to the `answer` prop (from a restored result on reload).

@@ -37,6 +37,9 @@ jest.mock('../services/chat_event_handler', () => ({
     handleEvent: jest.fn(),
     clearState: jest.fn(),
     cancelToolResultDispatch: jest.fn(),
+    handleStreamTermination: jest.fn(),
+    sendToolResultToAssistant: jest.fn(),
+    sendToolResultsToAssistant: jest.fn(),
   })),
 }));
 
@@ -1495,6 +1498,9 @@ describe('ChatWindow', () => {
         handleEvent: mockHandleEvent,
         clearState: mockClearState,
         cancelToolResultDispatch: jest.fn(),
+        handleStreamTermination: jest.fn(),
+        sendToolResultToAssistant: jest.fn(),
+        sendToolResultsToAssistant: jest.fn(),
       }));
 
       const mockEvents = [
@@ -1547,6 +1553,9 @@ describe('ChatWindow', () => {
         handleEvent: mockHandleEvent,
         clearState: mockClearState,
         cancelToolResultDispatch: jest.fn(),
+        handleStreamTermination: jest.fn(),
+        sendToolResultToAssistant: jest.fn(),
+        sendToolResultsToAssistant: jest.fn(),
       }));
 
       const mockEvents = [
@@ -1615,6 +1624,9 @@ describe('ChatWindow', () => {
         handleEvent: mockHandleEvent,
         clearState: mockClearState,
         cancelToolResultDispatch: jest.fn(),
+        handleStreamTermination: jest.fn(),
+        sendToolResultToAssistant: jest.fn(),
+        sendToolResultsToAssistant: jest.fn(),
       }));
 
       // Two parallel ask_user calls, each as START/ARGS/END (as injectUnfinishedToolCallEvents emits).
@@ -1752,6 +1764,9 @@ describe('ChatWindow', () => {
         handleEvent: mockHandleEvent,
         clearState: mockClearState,
         cancelToolResultDispatch: jest.fn(),
+        handleStreamTermination: jest.fn(),
+        sendToolResultToAssistant: jest.fn(),
+        sendToolResultsToAssistant: jest.fn(),
       }));
 
       // Mock ongoing streaming that continues after switch
@@ -2309,6 +2324,9 @@ describe('ChatWindow', () => {
           handleEvent: jest.fn(),
           clearState: jest.fn(),
           cancelToolResultDispatch: jest.fn(),
+        handleStreamTermination: jest.fn(),
+        sendToolResultToAssistant: jest.fn(),
+        sendToolResultsToAssistant: jest.fn(),
         };
       });
 
@@ -2348,6 +2366,9 @@ describe('ChatWindow', () => {
           handleEvent: jest.fn(),
           clearState: jest.fn(),
           cancelToolResultDispatch: jest.fn(),
+        handleStreamTermination: jest.fn(),
+        sendToolResultToAssistant: jest.fn(),
+        sendToolResultsToAssistant: jest.fn(),
         };
       });
 
@@ -2384,6 +2405,9 @@ describe('ChatWindow', () => {
           handleEvent: jest.fn(),
           clearState: jest.fn(),
           cancelToolResultDispatch: jest.fn(),
+        handleStreamTermination: jest.fn(),
+        sendToolResultToAssistant: jest.fn(),
+        sendToolResultsToAssistant: jest.fn(),
           sendToolResultToAssistant: jest.fn().mockResolvedValue(undefined),
         };
       });

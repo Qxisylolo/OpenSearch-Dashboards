@@ -195,12 +195,13 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
       return () => subscription.unsubscribe();
     }, [service, chatService]);
 
-    // Clean up event handler on component unmount
+    // Clean up event handler and human input service on component unmount
     useEffect(() => {
       return () => {
+        humanInputService.cleanAll();
         eventHandler.clearState();
       };
-    }, [eventHandler]);
+    }, [eventHandler, humanInputService]);
 
     // Initialize with fresh conversation on mount
     useMount(() => {
@@ -289,12 +290,14 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
             },
             error: (error: any) => {
               console.error('Subscription error:', error);
+              eventHandler.handleStreamTermination();
               isStreamingRef.current = false;
               setStartResponse(false);
               setIsStreaming(false);
               currentSubscriptionRef.current = null;
             },
             complete: () => {
+              eventHandler.handleStreamTermination();
               isStreamingRef.current = false;
               setStartResponse(false);
               setIsStreaming(false);
@@ -573,7 +576,13 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
         if (isStreamingRef.current || hasActiveToolCallsRef.current) return;
         // Remove the error message from timeline
         setTimelineSynced((prev) => prev.filter((msg) => msg.id !== messageId));
-        await eventHandler.sendToolResultToAssistant(toolCallId, toolResult);
+        // If toolResult is a batch array (from sendToolResultsToAssistant's sync_timeout),
+        // dispatch it through the batched path so each item's toolCallId is preserved.
+        if (Array.isArray(toolResult)) {
+          await eventHandler.sendToolResultsToAssistant(toolResult);
+        } else {
+          await eventHandler.sendToolResultToAssistant(toolCallId, toolResult);
+        }
       },
       [eventHandler, setTimelineSynced]
     );
