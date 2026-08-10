@@ -139,6 +139,19 @@ async function forwardToAgUI(
 
   logger?.debug('Forwarding to external AG-UI', { agUiUrl, dataSourceId });
 
+  // Propagate a client disconnect upstream. Otherwise only the browser-to-Dashboards
+  // connection drops: this fetch stays open, so the agent never sees the disconnect and
+  // keeps streaming to Bedrock, running tools and persisting an answer nobody is reading.
+  // Cancelling lands on the task actually running the agent, so it needs no shared state.
+  // A disconnect is deliberately not distinguished from a stop: a refresh therefore loses
+  // the in-flight answer (it is only persisted once fully generated), which is preferred
+  // over paying for a run whose client has gone.
+  const upstreamAbort = new AbortController();
+  const abortSubscription = request.events.aborted$.subscribe(() => {
+    logger?.info('Client disconnected; aborting AG-UI request');
+    upstreamAbort.abort();
+  });
+
   // Forward the request to AG-UI server using native fetch (Node 18+)
   const agUiResponse = await fetch(agUiUrl, {
     method: 'POST',
@@ -148,9 +161,11 @@ async function forwardToAgUI(
       ...(oboToken ? { Authorization: `Bearer ${oboToken}` } : {}),
     },
     body: JSON.stringify(requestBody),
+    signal: upstreamAbort.signal,
   });
 
   if (!agUiResponse.ok) {
+    abortSubscription.unsubscribe();
     return response.customError({
       statusCode: agUiResponse.status,
       body: {
@@ -171,10 +186,21 @@ async function forwardToAgUI(
           this.push(Buffer.from(value)); // Push as Buffer for binary mode
         }
       } catch (error) {
-        this.destroy(error as Error);
+        // An aborted upstream fetch lands here; end the stream rather than erroring,
+        // since the client that would have seen the error is already gone.
+        if ((error as Error)?.name === 'AbortError') {
+          this.push(null);
+        } else {
+          this.destroy(error as Error);
+        }
       }
     },
+    destroy(error, callback) {
+      abortSubscription.unsubscribe();
+      callback(error);
+    },
   });
+  stream.on('end', () => abortSubscription.unsubscribe());
 
   return response.ok({
     headers: {
