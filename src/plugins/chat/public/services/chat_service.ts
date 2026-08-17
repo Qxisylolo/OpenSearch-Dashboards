@@ -650,7 +650,7 @@ export class ChatService {
    * `toolCallId`), keeping each `toolUse` adjacent to its `toolResult` and
    * matching the memory store's fan-out shape. Since all calls belong to one
    * assistant message, a single `abort()` + one sync-poll (on the last id)
-   * covers the batch. See PARALLEL_FRONTEND_TOOLS_DESIGN.md.
+   * covers the batch.
    */
   public async sendToolResults(
     items: Array<{ toolCallId: string; result: any }>,

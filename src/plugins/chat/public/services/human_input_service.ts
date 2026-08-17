@@ -102,11 +102,6 @@ export class HumanInputService {
     return this.answers$.getValue();
   }
 
-  /** Whether any question is currently awaiting an answer. */
-  hasPending(): boolean {
-    return this.pending$.getValue().length > 0;
-  }
-
   /**
    * Ask the user a question and return a promise that resolves when they
    * answer. The promise resolves with `{ cancelled: true }` if the request is

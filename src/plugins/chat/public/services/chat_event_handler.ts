@@ -72,7 +72,7 @@ export class ChatEventHandler {
   private toolResultAbortController: AbortController | null = null;
 
   // Parallel frontend tool calls in one turn are buffered and dispatched
-  // together once complete (see PARALLEL_FRONTEND_TOOLS_DESIGN.md). `expected`
+  // together once complete. `expected`
   // holds ids that resolve locally, `results` their outcomes; `sealed` flips on
   // RUN_FINISHED, after which a full `results` set triggers dispatch.
   private batchExpected = new Set<string>();

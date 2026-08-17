@@ -2405,9 +2405,8 @@ describe('ChatWindow', () => {
           handleEvent: jest.fn(),
           clearState: jest.fn(),
           cancelToolResultDispatch: jest.fn(),
-        handleStreamTermination: jest.fn(),
-        sendToolResultToAssistant: jest.fn(),
-        sendToolResultsToAssistant: jest.fn(),
+          handleStreamTermination: jest.fn(),
+          sendToolResultsToAssistant: jest.fn(),
           sendToolResultToAssistant: jest.fn().mockResolvedValue(undefined),
         };
       });

@@ -152,17 +152,25 @@ async function forwardToAgUI(
     upstreamAbort.abort();
   });
 
-  // Forward the request to AG-UI server using native fetch (Node 18+)
-  const agUiResponse = await fetch(agUiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-      ...(oboToken ? { Authorization: `Bearer ${oboToken}` } : {}),
-    },
-    body: JSON.stringify(requestBody),
-    signal: upstreamAbort.signal,
-  });
+  // Forward the request to AG-UI server using native fetch (Node 18+).
+  // Wrapped so the aborted$ subscription is released even if fetch itself rejects — e.g. a network
+  // error, or the upstream abort firing before the response resolves. The cleanup below only runs
+  // once a response/stream exists, so without this the subscription would leak on that path.
+  let agUiResponse: Awaited<ReturnType<typeof fetch>>;
+  try {
+    agUiResponse = await fetch(agUiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify(requestBody),
+      signal: upstreamAbort.signal,
+    });
+  } catch (error) {
+    abortSubscription.unsubscribe();
+    throw error;
+  }
 
   if (!agUiResponse.ok) {
     abortSubscription.unsubscribe();
