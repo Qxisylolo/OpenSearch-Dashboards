@@ -617,7 +617,6 @@ export class ChatService {
 
     // Get workspace-aware data source ID
     const dataSourceId = await this.getCurrentDataSourceId();
-    this.setSessionDataSourceList(dataSourceId);
     const context = await this.buildAvailableDsContext(dataSourceId);
 
     const threadId = this.getThreadId();
@@ -705,7 +704,6 @@ export class ChatService {
     // try the confirmed conversation override first; getCurrentDataSourceId still falls back
     // to getWorkspaceAwareDataSourceId
     const dataSourceId = await this.getCurrentDataSourceId();
-    this.setSessionDataSourceList(dataSourceId);
     const context = await this.buildAvailableDsContext(dataSourceId);
 
     // Send the tool result back to the agent with full conversation history
