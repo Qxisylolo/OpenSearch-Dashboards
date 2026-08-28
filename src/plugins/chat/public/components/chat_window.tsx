@@ -709,11 +709,8 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
         setPendingMessage(null);
         setAvailableDataSources([]);
 
-        // Clear the confirmed conversation-level data source override.
-        // restoreConfirmedDataSourceFromSnapshot will re-apply the correct value if this
-        // conversation contains a switch_data_source tool call.
-        chatService.clearConfirmedDataSourceId();
-        chatService.clearSessionDataSourceList();
+        // Clear the confirmed conversation-level data source and its context
+        chatService.clearSessionDataSource();
 
         // Abort any ongoing conversation loading
         if (conversationLoadAbortControllerRef.current) {

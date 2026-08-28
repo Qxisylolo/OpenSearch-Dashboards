@@ -49,6 +49,8 @@ export interface CurrentChatState {
  */
 export const CONTINUATION_DISPATCH_DELAY_MS = 3000;
 
+export const AVAILABLE_DATA_SOURCES_CONTEXT_ID = 'available-data-sources-context';
+
 export class ChatService {
   private agent: AgUiAgent;
   public availableTools: ToolDefinition[] = [];
@@ -426,13 +428,10 @@ export class ChatService {
     return this.confirmedDataSourceId;
   }
 
-  public clearConfirmedDataSourceId(): void {
-    // In-memory reset only
+  public clearSessionDataSource(): void {
     this.confirmedDataSourceId = undefined;
-  }
-
-  public clearSessionDataSourceList(): void {
     this.sessionDataSourceList = [];
+    this.clearDynamicContextFromStore(AVAILABLE_DATA_SOURCES_CONTEXT_ID);
   }
 
   public setSessionDataSourceList(id: string | undefined): void {
@@ -446,6 +445,13 @@ export class ChatService {
 
   public getSessionDataSourceList(): string[] {
     return [...this.sessionDataSourceList];
+  }
+
+  private clearConversationDataSourceState(): void {
+    this.cachedDataSourceId = undefined;
+    this.confirmedDataSourceId = undefined;
+    this.sessionDataSourceList = [];
+    this.cachedAvailableDataSources = undefined;
   }
 
   private persistDataSourceState(): void {
@@ -527,61 +533,59 @@ export class ChatService {
   }
 
   private async buildAvailableDsContext(dataSourceId?: string) {
-    // Get all contexts from the assistant context store (static + dynamic)
     const contextStore = (window as any).assistantContextStore;
-    const allContexts = contextStore ? contextStore.getAllContexts() : [];
 
-    const context = allContexts.map((ctx: any) => ({
-      description: ctx.description,
-      value: typeof ctx.value === 'string' ? ctx.value : JSON.stringify(ctx.value),
-    }));
-
-    // multi data sources already seen in this conversation,  inject the available ds list context
     const sessionDataSourceList = this.getSessionDataSourceList();
 
-    if (sessionDataSourceList.length > 1) {
+    if (contextStore && sessionDataSourceList.length > 1) {
       const availableDataSources = await this.getAvailableDataSources();
-      const dsListText = availableDataSources
-        .map((ds) => `  - id: "${ds.id}", title: "${ds.title}"`)
-        .join('\n');
       const activeDatasource = availableDataSources.find((ds) => ds.id === dataSourceId);
 
       const activeDsLabel = activeDatasource
         ? `"${activeDatasource.title}" (id: ${activeDatasource.id})`
         : `id: ${dataSourceId}`;
-      const sessionDsLabel =
-        sessionDataSourceList.length > 0
-          ? sessionDataSourceList
-              .map((id) => {
-                const sessionDataSource = availableDataSources.find((ds) => ds.id === id);
-                return sessionDataSource
-                  ? `"${sessionDataSource.title}" (id: ${sessionDataSource.id})`
-                  : `id: ${id}`;
-              })
-              .join(', ')
-          : 'none';
+      const sessionDsLabel = sessionDataSourceList
+        .map((id) => {
+          const sessionDataSource = availableDataSources.find((ds) => ds.id === id);
+          return sessionDataSource
+            ? `"${sessionDataSource.title}" (id: ${sessionDataSource.id})`
+            : `id: ${id}`;
+        })
+        .join(', ');
 
-      context.push({
+      contextStore.addContext({
+        id: AVAILABLE_DATA_SOURCES_CONTEXT_ID,
         description: 'available_data_sources',
         value: [
-          `Available data sources:`,
-          dsListText,
           `Currently active data source: ${activeDsLabel}`,
-          `Data sources already seen in this conversation: ${sessionDsLabel}`,
-          `IMPORTANT: If more than one data source has already appeared in this conversation,`,
-          `you MUST call the switch_data_source tool BEFORE any data-source-aware tool that`,
-          `inspects fields, queries data, or creates a visualization.`,
-          `A previously selected/confirmed data source is only the user's LAST choice.`,
-          `It does NOT remove the requirement to call switch_data_source again once this`,
-          `conversation already involves multiple data sources.`,
-          `The switch_data_source tool asks the USER to choose the data source.`,
-          `Do NOT ask the user which data source to use in natural language.`,
-          `Do NOT choose a different data source silently on the user's behalf.`,
+          `Data sources already seen in this conversation (ordered from the oldest(first) to the most recent(last)): ${sessionDsLabel}`,
+          `IMPORTANT — this conversation involves MORE THAN ONE data source.`,
+          `Before ANY data-source-aware action (inspecting fields, querying data, or creating a`,
+          `visualization), you MUST have the USER pick which data source to use for the current`,
+          `request by calling the ask_user tool with inputType 'select'. Build ONE option per data`,
+          `source listed above: set each option's label to the data source's NAME/title (this is what`,
+          `the user sees — NEVER show the raw id to the user) and its value to that data source's id`,
+          `(used internally to switch, not displayed). Example: ask_user({ inputType: 'select', prompt:`,
+          `'This conversation uses multiple data sources. Which one should I use?', options: [{ label:`,
+          `'<data source name>', value: '<data source id>' }, ...] }).`,
+          `A data source being currently active or previously confirmed does NOT satisfy this`,
+          `requirement — you MUST still call ask_user whenever the user has not explicitly chosen one`,
+          `for the current request. Do NOT silently reuse the current/last data source, do NOT guess,`,
+          `and do NOT ask which data source to use in free-form text.`,
+          `Once the user answers, call switch_data_source with the chosen id to apply it, then proceed`,
+          `using that data source for the rest of the current request.`,
         ].join('\n'),
       });
+    } else if (contextStore) {
+      contextStore.removeContextById(AVAILABLE_DATA_SOURCES_CONTEXT_ID);
     }
 
-    return context;
+    // Build the per-run context from the store (static + dynamic + the datasource context above).
+    const allContexts = contextStore ? contextStore.getAllContexts() : [];
+    return allContexts.map((ctx: any) => ({
+      description: ctx.description,
+      value: typeof ctx.value === 'string' ? ctx.value : JSON.stringify(ctx.value),
+    }));
   }
 
   public async sendMessage(
@@ -944,12 +948,16 @@ export class ChatService {
     }
   }
 
-  private clearDynamicContextFromStore(): void {
+  private clearDynamicContextFromStore(id?: string): void {
     const contextStore = (window as any).assistantContextStore;
     if (!contextStore) {
       return;
     }
 
+    if (id) {
+      contextStore.removeContextById(id);
+      return;
+    }
     // Get all contexts with IDs that are NOT page contexts (dynamic contexts) and remove them
     const allContexts = contextStore.getAllContexts();
     const dynamicContexts = allContexts.filter(
@@ -969,12 +977,7 @@ export class ChatService {
     this.coreChatService.newThread();
 
     // Clear data source selection and cache for new session
-    this.cachedDataSourceId = undefined;
-    this.cachedAvailableDataSources = undefined;
-
-    // Clear the confirmed conversation-level data source override
-    this.confirmedDataSourceId = undefined;
-    this.sessionDataSourceList = [];
+    this.clearConversationDataSourceState();
 
     // Clear dynamic context from global store for fresh chat session
     this.clearDynamicContextFromStore();
