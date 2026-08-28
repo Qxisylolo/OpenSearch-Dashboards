@@ -3,7 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ChatService } from './chat_service';
+import {
+  AVAILABLE_DATA_SOURCES_CONTEXT_ID,
+  ChatService,
+  AVAILABLE_DATA_SOURCES_CONTEXT_DES,
+} from './chat_service';
 import { AgUiAgent, BaseEvent } from './ag_ui_agent';
 import { Observable, BehaviorSubject } from 'rxjs';
 import { Message } from '../../common/types';
@@ -272,20 +276,35 @@ describe('ChatService', () => {
   });
 
   describe('sendMessage', () => {
+    const createStatefulContextStore = () => {
+      const storedContexts: Array<{ id: string; description: string; value: string }> = [];
+      return {
+        addContext: jest.fn((ctx: any) => {
+          storedContexts.push(ctx);
+        }),
+        removeContextById: jest.fn((id: string) => {
+          const index = storedContexts.findIndex((ctx) => ctx.id === id);
+          if (index !== -1) storedContexts.splice(index, 1);
+        }),
+        getAllContexts: jest.fn(() => storedContexts),
+        getBackendFormattedContexts: jest.fn().mockReturnValue([]),
+      };
+    };
+
     beforeEach(() => {
       // Initialize a thread first - required for sendMessage
       chatService.newThread();
-      // Mock window.assistantContextStore
-      (global as any).window = {
-        assistantContextStore: {
-          getAllContexts: jest.fn().mockReturnValue([]),
-          getBackendFormattedContexts: jest.fn().mockReturnValue([]),
-        },
+      // Mock window.assistantContextStore.
+      (window as any).assistantContextStore = {
+        addContext: jest.fn(),
+        removeContextById: jest.fn(),
+        getAllContexts: jest.fn().mockReturnValue([]),
+        getBackendFormattedContexts: jest.fn().mockReturnValue([]),
       };
     });
 
     afterEach(() => {
-      delete (global as any).window;
+      delete (window as any).assistantContextStore;
     });
 
     it('should send message and return observable with user message', async () => {
@@ -512,7 +531,7 @@ describe('ChatService', () => {
       );
     });
 
-    it('should include session data source history in available_data_sources context', async () => {
+    it('should include session data source history in available-data-sources-context context', async () => {
       const mockObservable = new Observable<BaseEvent>();
       mockAgent.runAgent.mockReturnValue(mockObservable);
 
@@ -530,6 +549,8 @@ describe('ChatService', () => {
         undefined,
         mockSavedObjectsClient as any
       );
+
+      (window as any).assistantContextStore = createStatefulContextStore();
 
       service.newThread();
       service.setSessionDataSourceList('ds-1');
@@ -540,21 +561,21 @@ describe('ChatService', () => {
 
       const runInput = mockAgent.runAgent.mock.calls[0][0];
       const availableDataSourcesContext = runInput.context.find(
-        (ctx: any) => ctx.description === 'available_data_sources'
+        (ctx: any) => ctx.description === AVAILABLE_DATA_SOURCES_CONTEXT_DES
       );
 
       expect(availableDataSourcesContext.value).toContain(
-        'Data sources already seen in this conversation: "Source One" (id: ds-1), "Source Two" (id: ds-2)'
+        'Data sources already seen in this conversation (ordered from the oldest(first) to the most recent(last)): "Source One" (id: ds-1), "Source Two" (id: ds-2)'
       );
       expect(availableDataSourcesContext.value).toContain(
-        'If more than one data source has already appeared in this conversation'
+        'IMPORTANT — this conversation involves MORE THAN ONE data source.'
       );
       expect(availableDataSourcesContext.value).toContain(
-        "A previously selected/confirmed data source is only the user's LAST choice."
+        'A data source being currently active or previously confirmed does NOT satisfy this'
       );
     });
 
-    it('should not include available_data_sources context when only one data source has appeared in the session', async () => {
+    it('should not include available-data-sources-context context when only one data source has appeared in the session', async () => {
       const mockObservable = new Observable<BaseEvent>();
       mockAgent.runAgent.mockReturnValue(mockObservable);
 
@@ -573,6 +594,9 @@ describe('ChatService', () => {
         mockSavedObjectsClient as any
       );
 
+      const contextStore = createStatefulContextStore();
+      (window as any).assistantContextStore = contextStore;
+
       service.newThread();
       service.setSessionDataSourceList('ds-1');
       mockUiSettings.get.mockReturnValue(undefined);
@@ -581,10 +605,14 @@ describe('ChatService', () => {
 
       const runInput = mockAgent.runAgent.mock.calls[0][0];
       const availableDataSourcesContext = runInput.context.find(
-        (ctx: any) => ctx.description === 'available_data_sources'
+        (ctx: any) => ctx.description === AVAILABLE_DATA_SOURCES_CONTEXT_DES
       );
 
       expect(availableDataSourcesContext).toBeUndefined();
+      expect(contextStore.addContext).not.toHaveBeenCalled();
+      expect(contextStore.removeContextById).toHaveBeenCalledWith(
+        AVAILABLE_DATA_SOURCES_CONTEXT_ID
+      );
     });
   });
 
@@ -846,7 +874,6 @@ describe('ChatService', () => {
         toolCallId: 'tool-123',
       });
     });
-
 
     describe('abort signal', () => {
       beforeEach(() => {
@@ -1195,7 +1222,6 @@ describe('ChatService', () => {
         toolCallId: 'tool-B',
       });
     });
-
 
     it('should include full history and skip the sync wait when includeFullHistory is true', async () => {
       const mockObservable = new Observable<BaseEvent>();

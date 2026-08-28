@@ -710,7 +710,7 @@ const ChatWindowContent = React.forwardRef<ChatWindowInstance, ChatWindowProps>(
         setAvailableDataSources([]);
 
         // Clear the confirmed conversation-level data source and its context
-        chatService.clearSessionDataSource();
+        chatService.clearSessionDataSourceAndContext();
 
         // Abort any ongoing conversation loading
         if (conversationLoadAbortControllerRef.current) {

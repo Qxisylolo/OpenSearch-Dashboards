@@ -50,6 +50,8 @@ export interface CurrentChatState {
 export const CONTINUATION_DISPATCH_DELAY_MS = 3000;
 
 export const AVAILABLE_DATA_SOURCES_CONTEXT_ID = 'available-data-sources-context';
+export const AVAILABLE_DATA_SOURCES_CONTEXT_DES =
+  'Context for available data sources in this conversation';
 
 export class ChatService {
   private agent: AgUiAgent;
@@ -81,10 +83,6 @@ export class ChatService {
 
   // Subscription to assistant action service for tool updates
   private toolSubscription?: Subscription;
-
-  // Data source explicitly selected by user in this session
-  private cachedDataSourceId?: string;
-
   // User-confirmed conversation-level data source override.
   private confirmedDataSourceId?: string;
   // Data source ids that have appeared in this conversation.
@@ -403,16 +401,14 @@ export class ChatService {
    * Get the current data source ID from all resolution sources.
    *
    * Priority (highest to lowest):
-   *   1. confirmedDataSourceId    — explicit conversation-level override confirmed by the user
-   *   2. getDataSourceFromPageContext() — data source inferred from the current page/panel context
-   *   3. cachedDataSourceId       — set by the user via the data source selector in the chat UI
-   *   4. getWorkspaceAwareDataSourceId() — workspace default
+   *   1. getDataSourceFromPageContext() — data source inferred from the current page/panel context
+   *   2. confirmedDataSourceId    — explicit conversation-level override confirmed or selected by the user
+   *   3. getWorkspaceAwareDataSourceId() — workspace default
    */
   public async getCurrentDataSourceId(): Promise<string | undefined> {
     const ds =
-      this.confirmedDataSourceId ||
       this.getDataSourceFromPageContext() ||
-      this.cachedDataSourceId ||
+      this.confirmedDataSourceId ||
       (await this.getWorkspaceAwareDataSourceId());
 
     return ds;
@@ -428,7 +424,7 @@ export class ChatService {
     return this.confirmedDataSourceId;
   }
 
-  public clearSessionDataSource(): void {
+  public clearSessionDataSourceAndContext(): void {
     this.confirmedDataSourceId = undefined;
     this.sessionDataSourceList = [];
     this.clearDynamicContextFromStore(AVAILABLE_DATA_SOURCES_CONTEXT_ID);
@@ -448,7 +444,6 @@ export class ChatService {
   }
 
   private clearConversationDataSourceState(): void {
-    this.cachedDataSourceId = undefined;
     this.confirmedDataSourceId = undefined;
     this.sessionDataSourceList = [];
     this.cachedAvailableDataSources = undefined;
@@ -555,7 +550,7 @@ export class ChatService {
 
       contextStore.addContext({
         id: AVAILABLE_DATA_SOURCES_CONTEXT_ID,
-        description: 'available_data_sources',
+        description: AVAILABLE_DATA_SOURCES_CONTEXT_DES,
         value: [
           `Currently active data source: ${activeDsLabel}`,
           `Data sources already seen in this conversation (ordered from the oldest(first) to the most recent(last)): ${sessionDsLabel}`,
@@ -1184,7 +1179,7 @@ export class ChatService {
    * Explicitly set the data source ID (e.g., after user selection)
    */
   public setDataSourceId(id: string | undefined): void {
-    this.cachedDataSourceId = id;
+    this.confirmedDataSourceId = id;
     if (!id) return;
     this.setSessionDataSourceList(id);
   }
