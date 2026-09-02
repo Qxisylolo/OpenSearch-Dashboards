@@ -212,7 +212,8 @@ export const createGroupedTimeBarChart = (
     [AxisRole.COLOR]: VisColumn;
   },
   timeRange?: { from: string; to: string },
-  allData?: Array<Record<string, any>>
+  allData?: Array<Record<string, any>>,
+  seriesDisplayNames?: Record<string, string>
 ): { spec: any; legendItems: LegendItem[] } => {
   const axisConfig = getAxisConfig(styles);
 
@@ -292,6 +293,7 @@ export const createGroupedTimeBarChart = (
     axisConfig,
     axisColumnMappings: axisColumnMappings ?? {},
     timeRange: visibleTimeRange,
+    seriesDisplayNames,
   });
 
   return { spec: result.spec, legendItems: result.legendItems ?? [] };
