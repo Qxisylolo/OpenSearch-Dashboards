@@ -259,7 +259,7 @@ export const buildAxisConfigs = <T extends BaseChartStyle>(
         hasDisplayNames && {
           axisLabel: {
             ...axisStyling.axisLabel,
-            formatter: (value: string | number) => String(seriesDisplayNames?.[value] ?? value),
+            formatter: (value: string) => String(seriesDisplayNames?.[value] ?? value),
           },
         }),
       // if min and max are not valid, ignore

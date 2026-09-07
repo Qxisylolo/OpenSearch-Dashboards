@@ -5,6 +5,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { i18n } from '@osd/i18n';
+import { isEqual } from 'lodash';
 import {
   EuiButtonEmpty,
   EuiDragDropContext,
@@ -41,7 +42,6 @@ import type { RowStepReadout } from '../../pages/metrics/query_panel';
 import type { PerQueryOptions } from '../../../../../query_enhancements/common';
 
 import '../../pages/metrics/metrics_query_panel.scss';
-import { useEditorOperations } from '../hooks/use_editor_operations';
 
 /**
  * Multi-row PromQL editor for the in-context visualization editor, mirroring the metrics page query panel
@@ -65,31 +65,39 @@ export const MetricMultiQueryPanelEditor: React.FC = () => {
   const nextRowId = useCallback(() => `row-${++rowIdCounter.current}`, []);
 
   const perQueryOptions = queryState.queryOptions?.perQueryOptions;
-  const perQueryOptionsRef = useRef(perQueryOptions);
-  perQueryOptionsRef.current = perQueryOptions;
 
   const [rows, setRows] = useState<QueryRow[]>(() =>
     initRows(queryState.query, nextRowId, perQueryOptions)
   );
 
-  // last synced query ref, re-split only when the query changes outside of this component
-  const lastSyncedQueryRef = useRef(queryState.query);
+  const lastSyncedQueryRef = useRef<{ query: string; perQueryOptions?: PerQueryOptions[] }>({
+    query: queryState.query,
+    perQueryOptions,
+  });
   useEffect(() => {
-    if (queryState.query !== lastSyncedQueryRef.current) {
-      lastSyncedQueryRef.current = queryState.query;
-      setRows(initRows(queryState.query, nextRowId, perQueryOptionsRef.current));
+    if (
+      queryState.query === lastSyncedQueryRef.current.query &&
+      isEqual(perQueryOptions, lastSyncedQueryRef.current.perQueryOptions)
+    ) {
+      return;
     }
-  }, [queryState.query, nextRowId]);
+    lastSyncedQueryRef.current = { query: queryState.query, perQueryOptions };
+    setRows(initRows(queryState.query, nextRowId, perQueryOptions));
+  }, [queryState.query, perQueryOptions, nextRowId]);
 
   const syncQuery = useCallback(
     (updatedRows: QueryRow[]) => {
       const { query: combined, perQueryOptions: nextOptions } = serializeRows(updatedRows);
+      if (
+        combined === lastSyncedQueryRef.current.query &&
+        isEqual(nextOptions, lastSyncedQueryRef.current.perQueryOptions)
+      ) {
+        return;
+      }
+      lastSyncedQueryRef.current = { query: combined, perQueryOptions: nextOptions };
       queryBuilder.updateQueryOptions({ perQueryOptions: nextOptions });
       queryBuilder.updateQueryState({ query: combined });
       queryBuilder.updateQueryEditorState({ isQueryEditorDirty: true });
-
-      if (combined === lastSyncedQueryRef.current) return;
-      lastSyncedQueryRef.current = combined;
     },
     [queryBuilder]
   );

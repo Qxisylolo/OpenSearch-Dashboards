@@ -471,14 +471,14 @@ export const seriesDisplayNameTooltipFormatter: TooltipFormatFn =
   };
 
 export const axisDisplayNameTooltipFormatter: TooltipFormatFn =
-  ({ seriesDisplayNames }) =>
+  ({ seriesDisplayNames, formatValue }) =>
   (params: any) => {
     // 0 is categorical field, 1 is value field
     const label = seriesDisplayNames?.[params[0].value[0]] ?? [params[0].value[0]];
     return sanitizeTooltipHtml(
       [
         `<strong>${escapeTooltipText(label)}</strong>`,
-        `${params[0].marker ?? ''}${escapeTooltipText(params[0].seriesName)}: ${escapeTooltipText(params[0].value[1])}`,
+        `${params[0].marker ?? ''}${escapeTooltipText(params[0].seriesName)}: ${escapeTooltipText(formatValue(params[0].value[1]))}`,
       ]
         .filter(Boolean)
         .join('<br/>')
@@ -486,10 +486,10 @@ export const axisDisplayNameTooltipFormatter: TooltipFormatFn =
   };
 
 export const pieDisplayNameTooltipFormatter: TooltipFormatFn =
-  ({ seriesDisplayNames }) =>
+  ({ seriesDisplayNames, formatValue }) =>
   (params: any) => {
     const displayName = seriesDisplayNames?.[params.name] ?? params.name;
     return sanitizeTooltipHtml(
-      `${params.marker ?? ''}<strong>${escapeTooltipText(displayName)}</strong>: ${escapeTooltipText(params.value)}`
+      `${params.marker ?? ''}<strong>${escapeTooltipText(displayName)}</strong>: ${escapeTooltipText(formatValue(params.value))}`
     );
   };

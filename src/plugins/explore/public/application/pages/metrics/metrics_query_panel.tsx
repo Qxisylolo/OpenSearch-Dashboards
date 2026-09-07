@@ -109,20 +109,26 @@ export const MetricsQueryPanel: React.FC = () => {
     (state: RootState) =>
       (state.query.queryOptions as PromQLQueryOptions | undefined)?.perQueryOptions
   );
-  const perQueryOptionsRef = useRef(reduxPerQueryOptions);
-  perQueryOptionsRef.current = reduxPerQueryOptions;
 
   const [rows, setRows] = useState<QueryRow[]>(() =>
     initRows(reduxQuery, nextRowId, reduxPerQueryOptions)
   );
-  const lastDispatchedRef = useRef(reduxQuery);
+
+  const lastDispatchedRef = useRef<{ query: string; perQueryOptions?: PerQueryOptions[] }>({
+    query: reduxQuery,
+    perQueryOptions: reduxPerQueryOptions,
+  });
 
   useEffect(() => {
-    if (reduxQuery !== lastDispatchedRef.current) {
-      lastDispatchedRef.current = reduxQuery;
-      setRows(initRows(reduxQuery, nextRowId, perQueryOptionsRef.current));
+    if (
+      reduxQuery === lastDispatchedRef.current.query &&
+      isEqual(reduxPerQueryOptions, lastDispatchedRef.current.perQueryOptions)
+    ) {
+      return;
     }
-  }, [reduxQuery, nextRowId]);
+    lastDispatchedRef.current = { query: reduxQuery, perQueryOptions: reduxPerQueryOptions };
+    setRows(initRows(reduxQuery, nextRowId, reduxPerQueryOptions));
+  }, [reduxQuery, reduxPerQueryOptions, nextRowId]);
 
   // Sync draft text to the QueryStringManager (NOT Redux) on every keystroke so
   // that handleQuerySubmit in TopNav can read it via queryString.getQuery().query.
@@ -130,17 +136,20 @@ export const MetricsQueryPanel: React.FC = () => {
   const syncEditorText = useCallback(
     (updatedRows: QueryRow[]) => {
       const { query: combined, perQueryOptions } = serializeRows(updatedRows);
+      const queryTextChanged = combined !== lastDispatchedRef.current.query;
+      const optionsChanged = !isEqual(perQueryOptions, lastDispatchedRef.current.perQueryOptions);
+      if (!queryTextChanged && !optionsChanged) return;
+
+      lastDispatchedRef.current = { query: combined, perQueryOptions };
+
       const currentQuery = queryString.getQuery() as PromQLQuery;
       queryString.setQuery({
         query: combined,
         queryOptions: { ...currentQuery.queryOptions, perQueryOptions },
       } as Partial<Query>);
-      if (!isEqual(perQueryOptions, perQueryOptionsRef.current)) {
-        dispatch(setQueryOptions({ perQueryOptions }));
-      }
+      if (optionsChanged) dispatch(setQueryOptions({ perQueryOptions }));
       dispatch(setIsQueryEditorDirty(true));
-      if (combined === lastDispatchedRef.current) return;
-      lastDispatchedRef.current = combined;
+      if (!queryTextChanged) return;
       setEditorText(combined);
     },
     [setEditorText, dispatch, queryString]

@@ -38,7 +38,8 @@ export const useQueryPanelEditorProps = (): QueryEditorProps => {
     const panelEl =
       domNode?.closest('.multiTabsPanel') ??
       domNode?.closest('.exploreResizableQueryContainer__queryPanel');
-    return panelEl?.clientHeight ?? domNode?.parentElement?.clientHeight ?? 100;
+
+    return Math.min(panelEl?.clientHeight ?? domNode?.parentElement?.clientHeight ?? 100, 100);
   }, []);
 
   // Contribute dashboard variable (`${var}`) suggestions as a completion extension so the
