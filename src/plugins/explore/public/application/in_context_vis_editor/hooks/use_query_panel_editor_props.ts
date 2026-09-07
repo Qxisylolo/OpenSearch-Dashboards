@@ -34,7 +34,10 @@ export const useQueryPanelEditorProps = (): QueryEditorProps => {
   );
 
   const getEditorContainerHeight = useCallback((domNode: HTMLElement | null) => {
-    const panelEl = domNode?.closest('.exploreResizableQueryContainer__queryPanel');
+    // Grow the editor height with its line counts, only for vis editor
+    const panelEl =
+      domNode?.closest('.multiTabsPanel') ??
+      domNode?.closest('.exploreResizableQueryContainer__queryPanel');
     return panelEl?.clientHeight ?? domNode?.parentElement?.clientHeight ?? 100;
   }, []);
 
