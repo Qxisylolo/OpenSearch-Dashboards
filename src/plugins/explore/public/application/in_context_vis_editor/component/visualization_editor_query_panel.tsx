@@ -12,6 +12,7 @@ import { QueryPanelWidgets } from './query_panel_widget';
 import { QueryPanelEditor } from './query_editor';
 import { MetricMultiQueryPanelEditor } from './metric_multi_query_editor';
 import { QueryPanelGeneratedQuery } from './generated_query_panel';
+import '../../../components/query_panel/query_panel.scss';
 import '../visualization_editor.scss';
 
 export const QueryPanel = ({
@@ -33,18 +34,21 @@ export const QueryPanel = ({
       paddingSize="s"
       borderRadius="none"
       className="visualizationEditorTabPanel"
-      style={{ height: '100%' }}
       hasBorder={false}
       hasShadow={false}
     >
       <QueryPanelWidgets />
-      <div className="exploreQueryPanel__editorsWrapper">
-        {languageType !== SupportLanguageType.promQL || isPromptMode ? (
-          <QueryPanelEditor />
-        ) : (
-          <MetricMultiQueryPanelEditor />
-        )}
-        <QueryPanelGeneratedQuery />
+      <div className="visualizationEditorTabPanel__editorsWrapper">
+        <div className="visualizationEditorTabPanel__editorBody">
+          {languageType !== SupportLanguageType.promQL || isPromptMode ? (
+            <>
+              <QueryPanelEditor />
+              <QueryPanelGeneratedQuery />
+            </>
+          ) : (
+            <MetricMultiQueryPanelEditor />
+          )}
+        </div>
       </div>
       {isLoading && (
         <EuiProgress
