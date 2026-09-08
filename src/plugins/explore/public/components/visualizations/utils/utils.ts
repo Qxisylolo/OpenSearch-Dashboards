@@ -439,6 +439,7 @@ export interface TooltipFormatParams<T extends BaseChartStyle = BaseChartStyle> 
   styles: T;
   seriesDisplayNames?: Record<string, string>;
   formatValue: (value: unknown) => string;
+  axesMappingEncode: { categoryEncode: string; valueEncode: string };
 }
 
 export type TooltipFormatFn = (params: TooltipFormatParams) => (echartsParams: any) => string;
@@ -470,15 +471,30 @@ export const seriesDisplayNameTooltipFormatter: TooltipFormatFn =
     return sanitizeTooltipHtml(lines.join('<br/>'));
   };
 
+const getEncodedValue = (row: any, axis: string) => {
+  const index = row.encode?.[axis]?.[0];
+  return row.value?.[index];
+};
+
 export const axisDisplayNameTooltipFormatter: TooltipFormatFn =
-  ({ seriesDisplayNames, formatValue }) =>
+  ({ seriesDisplayNames, formatValue, axesMappingEncode }) =>
   (params: any) => {
-    // 0 is categorical field, 1 is value field
-    const label = seriesDisplayNames?.[params[0].value[0]] ?? [params[0].value[0]];
+    const rows = Array.isArray(params) ? params : [params];
+    const categoryAxis = axesMappingEncode?.categoryEncode ?? 'x';
+    const valueAxis = axesMappingEncode?.valueEncode ?? 'y';
+
+    const categoryLabel = getEncodedValue(rows[0], categoryAxis);
+    const label = seriesDisplayNames?.[categoryLabel] ?? categoryLabel;
+
     return sanitizeTooltipHtml(
       [
         `<strong>${escapeTooltipText(label)}</strong>`,
-        `${params[0].marker ?? ''}${escapeTooltipText(params[0].seriesName)}: ${escapeTooltipText(formatValue(params[0].value[1]))}`,
+        ...rows.map(
+          (row: any) =>
+            `${row.marker ?? ''}${escapeTooltipText(row.seriesName)}: ${escapeTooltipText(
+              formatValue(getEncodedValue(row, valueAxis))
+            )}`
+        ),
       ]
         .filter(Boolean)
         .join('<br/>')

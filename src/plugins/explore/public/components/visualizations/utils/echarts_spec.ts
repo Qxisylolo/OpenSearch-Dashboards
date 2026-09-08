@@ -27,7 +27,12 @@ import {
   VisColumn,
   StandardOptions,
 } from '../types';
-import { convertThresholds, valueUnitFormatter, TooltipFormatFn } from './utils';
+import {
+  convertThresholds,
+  valueUnitFormatter,
+  TooltipFormatFn,
+  getNormalizedAxisConfig,
+} from './utils';
 import { DEFAULT_OPACITY } from '../constants';
 import { LegendItem } from './legend';
 import { formatUnitValue } from '../style_panel/unit/collection';
@@ -193,14 +198,24 @@ export const createBaseConfig =
 export const addTooltipFormatter =
   <T extends BaseChartStyle>(formatFn: TooltipFormatFn) =>
   (state: EChartsSpecState<T>): EChartsSpecState<T> => {
-    const { styles, seriesDisplayNames, baseConfig } = state;
+    const { styles, seriesDisplayNames, baseConfig, axisColumnMappings } = state;
     if (!seriesDisplayNames || Object.keys(seriesDisplayNames).length < 1) return state;
     const hasUnit = !!styles.unitId || styles.decimals != null || !!styles.unitSuffix;
+
+    const { categoryEncode, seriesEncode } = getNormalizedAxisConfig(
+      axisColumnMappings as
+        | { [AxisRole.X]: VisColumn; [AxisRole.Y]: VisColumn[] }
+        | { [AxisRole.X]: VisColumn[]; [AxisRole.Y]: VisColumn }
+    );
 
     const formatter = formatFn({
       styles,
       seriesDisplayNames,
       formatValue: valueUnitFormatter(styles, hasUnit),
+      axesMappingEncode: {
+        categoryEncode,
+        valueEncode: seriesEncode,
+      },
     });
 
     return {
