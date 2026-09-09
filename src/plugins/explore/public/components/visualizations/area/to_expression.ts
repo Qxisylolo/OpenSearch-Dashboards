@@ -124,10 +124,10 @@ export const createMultiAreaChart = (
     createBaseConfig({
       legend: { show: false },
     }),
-    addTooltipFormatter(seriesDisplayNameTooltipFormatter),
     buildAxisConfigs,
     applyPercentageAxis(styles),
     applyTimeRange,
+    addTooltipFormatter(seriesDisplayNameTooltipFormatter),
     buildVisMap({
       seriesFields: (headers) => (headers ?? []).filter((h) => h !== timeField),
     }),
@@ -180,9 +180,9 @@ export const createCategoryAreaChart = (
     createBaseConfig({
       legend: { show: false },
     }),
-    addTooltipFormatter(axisDisplayNameTooltipFormatter),
     buildAxisConfigs,
     applyPercentageAxis(styles),
+    addTooltipFormatter(axisDisplayNameTooltipFormatter),
     createAreaSeries({
       styles,
       categoryField,

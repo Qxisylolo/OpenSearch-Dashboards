@@ -199,8 +199,19 @@ export const addTooltipFormatter =
   <T extends BaseChartStyle>(formatFn: TooltipFormatFn) =>
   (state: EChartsSpecState<T>): EChartsSpecState<T> => {
     const { styles, seriesDisplayNames, baseConfig, axisColumnMappings } = state;
+
     if (!seriesDisplayNames || Object.keys(seriesDisplayNames).length < 1) return state;
     const hasUnit = !!styles.unitId || styles.decimals != null || !!styles.unitSuffix;
+
+    const tooltipConfig = Array.isArray(baseConfig?.tooltip)
+      ? baseConfig.tooltip[0]
+      : baseConfig?.tooltip;
+
+    // percentage mode already define valueFormatter, use it directly
+    const formatValue =
+      typeof tooltipConfig?.valueFormatter === 'function'
+        ? (tooltipConfig.valueFormatter as any)
+        : valueUnitFormatter(styles, hasUnit);
 
     const { categoryEncode, seriesEncode } = getNormalizedAxisConfig(
       axisColumnMappings as
@@ -211,7 +222,7 @@ export const addTooltipFormatter =
     const formatter = formatFn({
       styles,
       seriesDisplayNames,
-      formatValue: valueUnitFormatter(styles, hasUnit),
+      formatValue,
       axesMappingEncode: {
         categoryEncode,
         valueEncode: seriesEncode,

@@ -104,9 +104,9 @@ export const createBarSpec = (
     createBaseConfig({
       legend: { show: false },
     }),
-    addTooltipFormatter(axisDisplayNameTooltipFormatter),
     buildAxisConfigs,
     applyPercentageAxis(styles),
+    addTooltipFormatter(axisDisplayNameTooltipFormatter),
     buildVisMap({
       seriesFields: (headers) => (headers ?? []).filter((h) => h !== categoryField),
     }),
@@ -273,10 +273,10 @@ export const createGroupedTimeBarChart = (
     createBaseConfig({
       legend: { show: false },
     }),
-    addTooltipFormatter(seriesDisplayNameTooltipFormatter),
     buildAxisConfigs,
     applyPercentageAxis(styles),
     applyTimeRange,
+    addTooltipFormatter(seriesDisplayNameTooltipFormatter),
     buildVisMap({
       seriesFields: (headers) => (headers ?? []).filter((h) => h !== timeField),
     }),

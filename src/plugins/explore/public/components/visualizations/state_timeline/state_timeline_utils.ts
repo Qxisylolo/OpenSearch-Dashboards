@@ -533,7 +533,7 @@ export const createStateTimeLineSpec =
     if (groupField && seriesDisplayNames && Object.keys(seriesDisplayNames).length > 0) {
       const newyAxisConfig = { ...yAxisConfig };
       newyAxisConfig.axisLabel = {
-        show: true,
+        ...newyAxisConfig.axisLabel,
         formatter: (value: string) => seriesDisplayNames?.[value] ?? value,
       };
       newState.yAxisConfig = newyAxisConfig;

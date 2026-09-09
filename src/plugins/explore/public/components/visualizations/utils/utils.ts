@@ -468,7 +468,7 @@ export const seriesDisplayNameTooltipFormatter: TooltipFormatFn =
         formatValue(valueRaw[seriesIndex])
       )}`;
     });
-    return sanitizeTooltipHtml(lines.join('<br/>'));
+    return sanitizeTooltipHtml([params[0].axisValueLabel, ...lines].join('<br/>'));
   };
 
 const getEncodedValue = (row: any, axis: string) => {
