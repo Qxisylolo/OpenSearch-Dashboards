@@ -435,6 +435,30 @@ export const escapeTooltipText = (value: unknown) => escape(String(value ?? ''))
 
 export const sanitizeTooltipHtml = (html: string) => DOMPurify.sanitize(html);
 
+const formatTooltipLine = ({
+  marker,
+  label,
+  value,
+}: {
+  marker?: string;
+  label: unknown;
+  value: unknown;
+}) =>
+  `<div style="display:flex;justify-content:space-between;align-items:flex-start;">` +
+  `<span style="flex:0 0 auto;">${marker ?? ''}</span>` +
+  `<div style="
+            min-width:0;
+            flex:1;
+            overflow-wrap:anywhere;
+            white-space:normal;
+        ">
+            ${escapeTooltipText(label)}
+        </div>` +
+  `<strong style="margin-left:12px;text-align:right;white-space:nowrap;font-weight:600;">${escapeTooltipText(
+    value
+  )}</strong>` +
+  `</div>`;
+
 export interface TooltipFormatParams<T extends BaseChartStyle = BaseChartStyle> {
   styles: T;
   seriesDisplayNames?: Record<string, string>;
@@ -464,11 +488,13 @@ export const seriesDisplayNameTooltipFormatter: TooltipFormatFn =
       const label = seriesDisplayNames?.[seriesName] ?? seriesName;
       // ignore value[0] which is axis x
       const valueRaw = p.value.slice(1);
-      return `${p.marker ?? ''}${escapeTooltipText(label)}: ${escapeTooltipText(
-        formatValue(valueRaw[seriesIndex])
-      )}`;
+      return formatTooltipLine({
+        marker: p.marker,
+        label,
+        value: formatValue(valueRaw[seriesIndex]),
+      });
     });
-    return sanitizeTooltipHtml([params[0].axisValueLabel, ...lines].join('<br/>'));
+    return sanitizeTooltipHtml([params[0].axisValueLabel, ...lines].filter(Boolean).join(''));
   };
 
 const getEncodedValue = (row: any, axis: string) => {
@@ -488,16 +514,17 @@ export const axisDisplayNameTooltipFormatter: TooltipFormatFn =
 
     return sanitizeTooltipHtml(
       [
-        `<strong>${escapeTooltipText(label)}</strong>`,
-        ...rows.map(
-          (row: any) =>
-            `${row.marker ?? ''}${escapeTooltipText(row.seriesName)}: ${escapeTooltipText(
-              formatValue(getEncodedValue(row, valueAxis))
-            )}`
+        escapeTooltipText(label),
+        ...rows.map((row: any) =>
+          formatTooltipLine({
+            marker: row.marker,
+            label: row.seriesName,
+            value: formatValue(getEncodedValue(row, valueAxis)),
+          })
         ),
       ]
         .filter(Boolean)
-        .join('<br/>')
+        .join('')
     );
   };
 
@@ -506,6 +533,10 @@ export const pieDisplayNameTooltipFormatter: TooltipFormatFn =
   (params: any) => {
     const displayName = seriesDisplayNames?.[params.name] ?? params.name;
     return sanitizeTooltipHtml(
-      `${params.marker ?? ''}<strong>${escapeTooltipText(displayName)}</strong>: ${escapeTooltipText(formatValue(params.value))}`
+      formatTooltipLine({
+        marker: params.marker,
+        label: displayName,
+        value: formatValue(params.value),
+      })
     );
   };
