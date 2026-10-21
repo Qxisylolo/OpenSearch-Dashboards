@@ -30,6 +30,10 @@
     padding: $euiSizeS $euiSizeM;
   }
 
+  &__header--query {
+    box-shadow: inset 3px 0 0 $euiColorWarning;
+  }
+
   &__divider {
     height: $euiSize;
     border-left: $euiBorderThin;

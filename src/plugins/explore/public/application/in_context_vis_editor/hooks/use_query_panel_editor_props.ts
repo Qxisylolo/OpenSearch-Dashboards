@@ -14,7 +14,7 @@ import { createVariableCompletionProvider } from '../utils/variable_completion_p
 
 export const useQueryPanelEditorProps = (): QueryEditorProps & { editorKey: number } => {
   const { services } = useOpenSearchDashboards<ExploreServices>();
-  const { queryBuilder, queryState, queryEditorState } = useQueryBuilderState();
+  const { queryBuilder, queryState, queryEditorState, container } = useQueryBuilderState();
   const { switchEditorMode } = useEditorOperations();
   const isPromptMode = queryEditorState.editorMode === EditorMode.Prompt;
 
@@ -61,8 +61,8 @@ export const useQueryPanelEditorProps = (): QueryEditorProps & { editorKey: numb
   // Contribute dashboard variable (`${var}`) suggestions as a completion extension so the
   // shared query editor need not know about the dashboard-variables feature.
   const completionProviders = useMemo(
-    () => [createVariableCompletionProvider(() => queryBuilder.getVariableNames())],
-    [queryBuilder]
+    () => [createVariableCompletionProvider(() => container.getVariableNames())],
+    [container]
   );
 
   return {

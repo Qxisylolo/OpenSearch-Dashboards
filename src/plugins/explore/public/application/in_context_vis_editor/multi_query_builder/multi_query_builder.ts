@@ -5,7 +5,7 @@
 
 import { BehaviorSubject, Subscription, combineLatest, Observable, of } from 'rxjs';
 import { distinctUntilChanged, debounceTime, map, filter, switchMap } from 'rxjs/operators';
-import { isEqual } from 'lodash';
+import { isEqual, isUndefined, omitBy } from 'lodash';
 
 import { ExploreServices } from '../../../types';
 import {
@@ -15,8 +15,17 @@ import {
   QueryEditorState,
 } from '../query_builder/query_builder';
 import { getQueryLabel } from '../../../../../data/common';
-import { QueryRows } from './utils';
-import { MULTI_QUERIES_STATE_KEY, QUERY_BUILDER_QUERY_STATE_KEY } from '../types';
+
+import {
+  QueryRows,
+  UrlMultiEditorState,
+  UrlRowEditorState,
+  UrlRowEntry,
+  getQueryLabelIndex,
+  normalizeUrlEditorState,
+  normalizeUrlQueries,
+} from './utils';
+import { QUERY_BUILDER_QUERY_STATE_KEY, QUERY_EDITOR_STATE_KEY } from '../types';
 
 import {
   QueryExecutionStatus,
@@ -43,10 +52,13 @@ export type MultiQueryResult = Record<string, PerQueryResult>;
 
 export interface MultiQueryEditorState {
   dateRange?: { from: string; to: string };
+  maxDataPoints?: number;
+  selectedRowRefId?: string;
 }
 
-export interface MultiQueryState {
-  maxDataPoints?: number;
+interface RowSavedStates {
+  savedQueryState?: QueryState;
+  savedEditorState?: Partial<QueryEditorState>;
 }
 
 const initialMultiQueryEditorState: MultiQueryEditorState = {
@@ -61,20 +73,16 @@ export class MultiQueryBuilder {
   public multiQueryEditorState$ = new BehaviorSubject<MultiQueryEditorState>(
     initialMultiQueryEditorState
   );
-
-  public multiQueryState$ = new BehaviorSubject<MultiQueryState>({});
-  public variableNames$ = new BehaviorSubject<string[]>([]);
-
   public multiQueryResults$ = new BehaviorSubject<MultiQueryResult>({});
+
+  public variableNames$ = new BehaviorSubject<string[]>([]);
+  private interpolationService?: IVariableInterpolationService;
 
   private getServices: () => ExploreServices;
   private refIdCounter = 0;
-  public selectedRowRef$ = new BehaviorSubject<string>('');
-
   private subscriptions = Array<Subscription>();
   private isInitialized = false;
-  // TODO Shared by every row; applied to rows created later as well.
-  private interpolationService?: IVariableInterpolationService;
+
   // Pending row promises after init(), so MultiQueryBuilder.init() can wait for rows to be finished before callers inspect or execute them.
   private rowPromises = new WeakMap<QueryBuilder, Promise<void>>();
   // Bumped by reset(), so an init() still awaiting from the previous lifecycle can tell it's stale.
@@ -97,16 +105,20 @@ export class MultiQueryBuilder {
     }
     const lifecycleId = this.lifecycleId;
 
-    // Priority: URL > savedQueries
-    const queriesFromUrl = this.readQueriesFromUrl();
-    const queries = queriesFromUrl.length > 0 ? queriesFromUrl : (options?.savedQueries ?? []);
+    const { queries: queriesFromUrl, editorState: editorStateFromUrl } = this.readUrlState();
 
-    if (queries.length > 0) {
-      this.loadSavedQueries(queries);
+    if (queriesFromUrl.length > 0) {
+      this.loadQueryRows(queriesFromUrl, editorStateFromUrl);
+    } else if (options?.savedQueries?.length) {
+      this.loadSavedQueries(options.savedQueries, editorStateFromUrl);
     } else {
-      // Reuse the placeholder row consumers are already linked to after component finishes rendering
       this.ensureRow();
-      this.getAllRows().forEach((row) => this.startRowInit(row));
+      // `_e` alone (no queries): restore the rows' visibility and the container state.
+      const editorStateByRefId = new Map(editorStateFromUrl.rows);
+      this.getAllRows().forEach((row) =>
+        this.startRowInit(row, { savedEditorState: editorStateByRefId.get(row.refId) })
+      );
+      this.applyMultiEditorState(editorStateFromUrl);
     }
 
     this.setupGlobalDataRangeSync();
@@ -125,25 +137,11 @@ export class MultiQueryBuilder {
     this.setIsInitialized(true);
   }
 
-  // Hydrate queries[] from the URL: prefer the new multi-query key; fall back to the
-  // deprecated single-query key so pre-multi-query URLs still open (as N=1).
-  private readQueriesFromUrl(): QueryState[] {
-    const urlStateStorage = this.getServices()?.osdUrlStateStorage;
-    if (!urlStateStorage) {
-      return [];
-    }
-
-    const multi = urlStateStorage.get<QueryState[]>(MULTI_QUERIES_STATE_KEY);
-    if (multi && multi.length > 0) {
-      return multi;
-    }
-
-    // fallback: a single-query URL becomes a one-element queries[].
-    const single = urlStateStorage.get<QueryState>(QUERY_BUILDER_QUERY_STATE_KEY);
-    return single ? [single] : [];
-  }
-
-  //  --- Subscription ---
+  /* --- Subscription ---
+   * - setupGlobalDataRangeSync(): sync current time filter to global.
+   * - startUrlSync(): one-way, state -> URL, debounced. dateRange is left out: _g (timefilter) owns
+   *   it. External URL changes (back/forward) are not read back; remount the editor instead.
+   */
   private setupGlobalDataRangeSync() {
     const dataRangeSyncSub = this.multiQueryEditorState$
       .pipe(
@@ -167,6 +165,8 @@ export class MultiQueryBuilder {
   // Rows don't write the global query string (they're created with ownsGlobalState: false).
   // Mirror the SELECTED row into it so global consumers (search context, dataset service,
   // time picker) keep seeing the query the user is editing.
+
+  // TODO can delete? no global query used
   private setupSelectedRowQuerySync() {
     const selectedRowQuerySub = this.getSelectedRow$()
       .pipe(
@@ -205,60 +205,76 @@ export class MultiQueryBuilder {
     this.subscriptions.push(timefilterSub);
   }
 
-  // Whether any visible row's dataset is time based: decides if the shared date picker shows.
-  getHasTimeBasedRow$(): Observable<boolean> {
-    return this.queryRows$.pipe(
+  /* --- URL ---
+   * - readUrlState(): reads _eq ([refId, QueryState][]) and _e (container state + per-row isHidden),
+   *   both keyed by refId. For previous single query builder that holds a single row's state, use ref A.
+   * - startUrlSync(): one-way, state -> URL, debounced. dateRange is left out: _g (timefilter) owns
+   *   it. External URL changes (back/forward) are not read back; remount the editor instead.
+   */
+
+  private readUrlState(): {
+    queries: Array<UrlRowEntry<QueryState>>;
+    editorState: UrlMultiEditorState;
+  } {
+    const urlStateStorage = this.getServices()?.osdUrlStateStorage;
+    if (!urlStateStorage) {
+      return { queries: [], editorState: { rows: [] } };
+    }
+    return {
+      queries: normalizeUrlQueries(urlStateStorage.get(QUERY_BUILDER_QUERY_STATE_KEY)),
+      editorState: normalizeUrlEditorState(urlStateStorage.get(QUERY_EDITOR_STATE_KEY)),
+    };
+  }
+
+  private startUrlSync() {
+    // Each row's query state and persisted editor state, in row order.
+    const rowsUrlState$ = this.queryRows$.pipe(
       switchMap((rows) =>
         rows.length > 0
           ? combineLatest(
               rows.map((row) =>
-                combineLatest([row.datasetView$, row.queryEditorState$]).pipe(
-                  map(
-                    ([datasetView, editorState]) =>
-                      !editorState?.isHidden && !!datasetView?.dataView?.isTimeBased()
-                  )
-                )
+                combineLatest([
+                  row.queryState$,
+                  row.queryEditorState$.pipe(
+                    map((state): UrlRowEditorState => ({
+                      isHidden: state.isHidden,
+                    })),
+                    distinctUntilChanged((prev, curr) => isEqual(prev, curr))
+                  ),
+                ]).pipe(map(([queryState, editorState]) => ({ row, queryState, editorState })))
               )
-            ).pipe(map((flags) => flags.some(Boolean)))
-          : of(false)
-      ),
-      distinctUntilChanged()
-    );
-  }
-
-  async waitForAllRowsInitialized(): Promise<void> {
-    await Promise.allSettled(this.getAllRows().map((row) => this.rowPromises.get(row)));
-  }
-
-  private startRowInit(row: QueryBuilder, options?: { savedQueryState?: QueryState }) {
-    const initPromise = row.init(options);
-    this.rowPromises.set(row, initPromise);
-    return initPromise;
-  }
-
-  toSavedQueries(rows: QueryRows): QueryState[] {
-    // when saving rows, serialize rows in array without refId and only persist query state.
-    return rows.map((row) => row.queryState$.getValue());
-  }
-
-  private startUrlSync() {
-    const urlSync = this.queryRows$
-      .pipe(
-        switchMap((rows) =>
-          rows.length > 0
-            ? combineLatest(rows.map((row) => row.queryState$)).pipe(map(() => rows))
-            : of(rows)
-        ),
-        debounceTime(500)
+            )
+          : of([])
       )
-      .subscribe((rows) => {
-        this.syncToUrl(MULTI_QUERIES_STATE_KEY, this.toSavedQueries(rows));
+    );
+    // dateRange is left out: the global timefilter (`_g`) owns it.
+    const multiQueryEditorUrlState$ = this.multiQueryEditorState$.pipe(
+      map(({ selectedRowRefId, maxDataPoints }) => ({ selectedRowRefId, maxDataPoints })),
+      distinctUntilChanged((prev, curr) => isEqual(prev, curr))
+    );
+
+    const urlSync = combineLatest([rowsUrlState$, multiQueryEditorUrlState$])
+      .pipe(debounceTime(500))
+      .subscribe(([rowsState, multiQueryEditorUrlState]) => {
+        const queries: Array<UrlRowEntry<QueryState>> = rowsState.map(({ row, queryState }) => [
+          row.refId,
+          queryState,
+        ]);
+        const editorState: UrlMultiEditorState = {
+          ...omitBy(multiQueryEditorUrlState, isUndefined),
+          rows: rowsState.map(({ row, editorState: rowEditorState }) => [
+            row.refId,
+            omitBy(rowEditorState, isUndefined) as UrlRowEditorState,
+          ]),
+        };
+        this.syncToUrl(QUERY_BUILDER_QUERY_STATE_KEY, queries);
+        this.syncToUrl(QUERY_EDITOR_STATE_KEY, editorState);
       });
 
     this.subscriptions.push(urlSync);
   }
 
-  private syncToUrl(place: string, state: QueryState[] | Partial<MultiQueryEditorState>) {
+  private syncToUrl<T>(place: string, state: T) {
     const urlStateStorage = this.getServices()?.osdUrlStateStorage;
 
     if (urlStateStorage) {
@@ -266,23 +282,44 @@ export class MultiQueryBuilder {
     }
   }
 
-  // Builds a row without initialization
-  private buildRow(): QueryBuilder {
-    const row = new QueryBuilder(this.getServices, this.nextRefId());
-    this.refIdCounter += 1;
-    if (this.interpolationService) {
-      row.setInterpolationService(this.interpolationService);
+  /* --- Row management ---
+   * Rows are identified by refId (A, B, ...)
+   * - buildRow(): constructs a row without initializing it.
+   * - createRow(): buildRow() + row's init, tracked in rowPromises so init() can wait.
+   * - ensureRow(): a placeholder row (built, not initialized), so hooks have a selected row before init() runs.
+   * - addRow(): createRow() + appends to queryRows$; selects it only when it's the first row.
+   * - removeRow(): the last row can't be removed; removing the selected row selects the first one.
+   * - loadQueryRows() / loadSavedQueries(): replace all rows (refIds de-duplicated), then restore
+   *   per-row editor state (isHidden) and container editor state (selectedRow, maxDataPoints).
+   * - selectRow() / getSelectedRow$(): get selected row
+   * - getRow() / getAllRows()
+   * - updateQueryRow(): update query state or query editor for a specific row
+   */
+
+  private buildRow(refId?: string): QueryBuilder {
+    const row = new QueryBuilder(
+      this.getServices,
+      refId ?? this.nextRefId(),
+      () => this.interpolationService
+    );
+    if (!refId) {
+      this.refIdCounter += 1;
     }
     return row;
   }
 
-  private createRow(options?: { savedQueryState?: QueryState }): QueryBuilder {
-    const row = this.buildRow();
+  private startRowInit(row: QueryBuilder, options?: RowSavedStates) {
+    const initPromise = row.init(options);
+    this.rowPromises.set(row, initPromise);
+    return initPromise;
+  }
+
+  private createRow(options?: RowSavedStates & { refId?: string }): QueryBuilder {
+    const row = this.buildRow(options?.refId);
     this.startRowInit(row, options);
     return row;
   }
 
-  // This is the placeholder row. Use it to ensure that consumers like useQueryBuilderState can use before init()
   private ensureRow(): void {
     if (this.queryRows$.getValue().length > 0) {
       return;
@@ -292,7 +329,7 @@ export class MultiQueryBuilder {
     this.selectRow(row.refId);
   }
 
-  addRow(opts?: { savedQueryState?: QueryState }): QueryBuilder {
+  addRow(opts?: RowSavedStates & { refId?: string }): QueryBuilder {
     const row = this.createRow(opts);
     const isBeforeEmpty = this.queryRows$.getValue().length === 0;
     this.queryRows$.next([...this.queryRows$.getValue(), row]);
@@ -309,21 +346,83 @@ export class MultiQueryBuilder {
     }
     const deletedRow = this.getRow(refId);
     if (!deletedRow) return;
-    deletedRow.dispose();
     const newRows = this.getAllRows().filter((row) => row.refId !== refId);
-    this.queryRows$.next(newRows);
     // After removing the selected row, move selection to the first remaining row.
-    if (this.selectedRowRef$.getValue() === refId) {
+    if (this.multiQueryEditorState$.getValue().selectedRowRefId === refId) {
       this.selectRow(newRows[0].refId);
     }
+
+    this.queryRows$.next(newRows);
+    // Dispose last: until now the row was still listed (and maybe selected).
+    deletedRow.dispose();
   }
 
-  updateMultiQueryResults(result: PerQueryResult) {
-    const newResults = {
-      ...this.multiQueryResults$.getValue(),
-      [result.refId]: result,
-    };
-    this.multiQueryResults$.next(newResults);
+  loadSavedQueries(queries: QueryState[], editorState?: UrlMultiEditorState): void {
+    this.loadQueryRows(
+      queries.map((query, index) => [getQueryLabel(index), query]),
+      editorState
+    );
+  }
+
+  loadQueryRows(queries: Array<UrlRowEntry<QueryState>>, editorState?: UrlMultiEditorState): void {
+    this.disposeAllRows();
+    const seen = new Set<string>();
+    const uniqueQueries = queries.filter(([refId]) => {
+      if (seen.has(refId)) return false;
+      seen.add(refId);
+      return true;
+    });
+
+    this.refIdCounter = Math.max(
+      uniqueQueries.length,
+      ...uniqueQueries.map(([refId]) => getQueryLabelIndex(refId) + 1)
+    );
+
+    const editorStateByRefId = new Map(editorState?.rows ?? []);
+    uniqueQueries.forEach(([refId, savedQueryState]) => {
+      this.addRow({ refId, savedQueryState, savedEditorState: editorStateByRefId.get(refId) });
+    });
+
+    // restore container state
+    this.applyMultiEditorState(editorState);
+  }
+
+  // Only an existing row can be selected, so selectedRowRefId always names a row.
+  selectRow(refId: string) {
+    if (!this.getRow(refId)) {
+      return;
+    }
+    this.updateMultiQueryEditorState({ selectedRowRefId: refId });
+  }
+
+  getSelectedRow$(): Observable<QueryBuilder> {
+    // ensure a first row exists by the time component uses
+    this.ensureRow();
+    const selectedRow$ = this.multiQueryEditorState$.pipe(
+      map((state) => state.selectedRowRefId),
+      distinctUntilChanged()
+    );
+    return combineLatest([selectedRow$, this.queryRows$]).pipe(
+      // Rows and selection are updated in two steps (e.g. removeRow: rows first, then selectRow), so
+      // an emission can briefly carry a stale refId; fall back to the first row until selection catches up.
+      map(([refId, rows]) => rows.find((row) => row.refId === refId)),
+      filter((row): row is QueryBuilder => !!row),
+      distinctUntilChanged()
+    );
+  }
+
+  getSelectedRow(): QueryBuilder {
+    this.ensureRow();
+    const selectedRow = this.multiQueryEditorState$.getValue().selectedRowRefId;
+    return (selectedRow ? this.getRow(selectedRow) : undefined) ?? this.getAllRows()[0];
+  }
+
+  getRow(refId: string) {
+    return this.getAllRows().find((row) => row.refId === refId);
+  }
+
+  getAllRows() {
+    return this.queryRows$.value;
   }
 
   updateQueryRow<T extends keyof UpdateMap>(refId: string, type: T, updates: UpdateMap[T]) {
@@ -341,50 +440,12 @@ export class MultiQueryBuilder {
     }
   }
 
-  selectRow(refId: string) {
-    this.selectedRowRef$.next(refId);
-  }
-
-  getSelectedRow$(): Observable<QueryBuilder> {
-    // ensure a first row exists by the time component uses
-    this.ensureRow();
-    return combineLatest([this.selectedRowRef$, this.queryRows$]).pipe(
-      // Falls back to the first row if the selected refId can't be resolved
-      map(([refId, rows]) => this.getRow(refId) ?? rows[0]),
-      filter((row): row is QueryBuilder => !!row)
-    );
-  }
-
-  getSelectedRow(): QueryBuilder {
-    this.ensureRow();
-    return this.getRow(this.selectedRowRef$.getValue()) ?? this.getAllRows()[0];
-  }
-
-  getRow(refId: string) {
-    return this.getAllRows().find((row) => row.refId === refId);
-  }
-
-  getAllRows() {
-    return this.queryRows$.value;
-  }
-
-  private nextRefId(): string {
-    return getQueryLabel(this.refIdCounter);
-  }
-
-  // --- global ---
-  updateMultiQueryEditorState(updates: Partial<MultiQueryEditorState>) {
-    const currentState = this.multiQueryEditorState$.value;
-    this.multiQueryEditorState$.next({
-      ...currentState,
-      ...updates,
-    });
-  }
-
-  /**
-   * Executes every visible row in parallel; one row failing doesn't affect the others.
-   * `userInitiated: false` runs the query directly instead of the submit flow.
+  /* --- Execution ---
+   * executeAll(): runs every visible (non-hidden) row in parallel; one row failing doesn't stop the others. userInitiated: false runs executeQuery directly.
+   * cancelAll(): aborts every row's in-flight request and resets its result and status.
+   * Each row aborts only its own requests (abort key = refId).
    */
+
   async executeAll({ userInitiated = true }: { userInitiated?: boolean } = {}): Promise<void> {
     // const currentRows = this.queryRows$.getValue();
     // Hidden rows are neither executed nor merged.
@@ -415,7 +476,6 @@ export class MultiQueryBuilder {
     );
   }
 
-  // Abort row and reset their status.
   cancelAll(): void {
     this.getAllRows().forEach((row) => {
       row.abortActiveQueries();
@@ -432,18 +492,10 @@ export class MultiQueryBuilder {
     });
   }
 
-  loadSavedQueries(queries: QueryState[]): void {
-    this.disposeAllRows();
-    this.refIdCounter = 0;
-    queries.forEach((saveQuery) => {
-      this.addRow({ savedQueryState: saveQuery });
-    });
-  }
-
-  private disposeAllRows(): void {
-    this.queryRows$.getValue().forEach((r) => r.dispose());
-    this.queryRows$.next([]);
-  }
+  /* --- Variables ---
+   * Dashboard variables are shared by every row. Rows read the interpolation service through a
+   * getter at execution time, so rows created later get it too.
+   */
 
   setVariableNames(names: string[]) {
     this.variableNames$.next(names);
@@ -451,11 +503,75 @@ export class MultiQueryBuilder {
 
   setInterpolationService(service: IVariableInterpolationService) {
     this.interpolationService = service;
-    this.getAllRows().forEach((row) => row.setInterpolationService(service));
   }
 
   getVariableNames(): string[] {
     return this.variableNames$.value;
+  }
+
+  /* --- Helpers ---
+   */
+
+  // Restores the container-level editor state; a selectedRow that matches no row is ignored.
+  private applyMultiEditorState(editorState?: UrlMultiEditorState): void {
+    if (editorState?.maxDataPoints !== undefined) {
+      this.updateMultiQueryEditorState({ maxDataPoints: editorState.maxDataPoints });
+    }
+    if (editorState?.selectedRowRefId && this.getRow(editorState.selectedRowRefId)) {
+      this.selectRow(editorState.selectedRowRefId);
+    }
+  }
+
+  updateMultiQueryEditorState(updates: Partial<MultiQueryEditorState>) {
+    const currentState = this.multiQueryEditorState$.value;
+    this.multiQueryEditorState$.next({
+      ...currentState,
+      ...updates,
+    });
+  }
+
+  updateMultiQueryResults(result: PerQueryResult) {
+    const newResults = {
+      ...this.multiQueryResults$.getValue(),
+      [result.refId]: result,
+    };
+    this.multiQueryResults$.next(newResults);
+  }
+
+  private nextRefId(): string {
+    return getQueryLabel(this.refIdCounter);
+  }
+
+  private disposeAllRows(): void {
+    this.queryRows$.getValue().forEach((r) => r.dispose());
+    this.queryRows$.next([]);
+    // No rows left to point at; the next addRow() selects the first new row.
+    this.updateMultiQueryEditorState({ selectedRowRefId: undefined });
+  }
+
+  // Whether any visible row's dataset is time based: decides if the shared date picker shows.
+  getHasTimeBasedRow$(): Observable<boolean> {
+    return this.queryRows$.pipe(
+      switchMap((rows) =>
+        rows.length > 0
+          ? combineLatest(
+              rows.map((row) =>
+                combineLatest([row.datasetView$, row.queryEditorState$]).pipe(
+                  map(
+                    ([datasetView, editorState]) =>
+                      !editorState?.isHidden && !!datasetView?.dataView?.isTimeBased()
+                  )
+                )
+              )
+            ).pipe(map((flags) => flags.some(Boolean)))
+          : of(false)
+      ),
+      distinctUntilChanged()
+    );
+  }
+
+  async waitForAllRowsInitialized(): Promise<void> {
+    await Promise.allSettled(this.getAllRows().map((row) => this.rowPromises.get(row)));
   }
 
   dispose(): void {
@@ -465,7 +581,6 @@ export class MultiQueryBuilder {
     this.disposeAllRows();
     this.queryRows$.complete();
     this.multiQueryEditorState$.complete();
-    this.multiQueryState$.complete();
     this.multiQueryResults$.complete();
     this.variableNames$.complete();
   }
@@ -480,24 +595,22 @@ export class MultiQueryBuilder {
     this.multiQueryEditorState$ = new BehaviorSubject<MultiQueryEditorState>(
       initialMultiQueryEditorState
     );
-    this.multiQueryState$ = new BehaviorSubject<MultiQueryState>({});
     this.multiQueryResults$ = new BehaviorSubject<MultiQueryResult>({});
     this.variableNames$ = new BehaviorSubject<string[]>([]);
     this.refIdCounter = 0;
-    this.selectedRowRef$.next('');
     this.setIsInitialized(false);
     this.interpolationService = undefined;
     this.lifecycleId += 1;
   }
 }
 
-// Singleton instance
-let multiQueryBuilderInstance: MultiQueryBuilder | null = null;
+// // Singleton instance
+// let multiQueryBuilderInstance: MultiQueryBuilder | null = null;
 
-export function getMultiQueryBuilder(): MultiQueryBuilder {
-  if (!multiQueryBuilderInstance) {
-    multiQueryBuilderInstance = new MultiQueryBuilder(() => getExploreServices());
-  }
+// export function getMultiQueryBuilder(): MultiQueryBuilder {
+//   if (!multiQueryBuilderInstance) {
+//     multiQueryBuilderInstance = new MultiQueryBuilder(() => getExploreServices());
+//   }
 
-  return multiQueryBuilderInstance;
-}
+//   return multiQueryBuilderInstance;
+// }

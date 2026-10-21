@@ -18,7 +18,9 @@ import { QueryAddButton, QueryItemActions, TransformItemActions } from './sectio
 import { SectionItem } from './utils';
 import { useQueryBuilderState } from '../../hooks/use_query_builder_state';
 import { QueryPanel } from '../visualization_editor_query_panel';
+import { DatasetSelectWidget } from '../dataset_select';
 import { TransformationService } from '../../../../components/data_transformations';
+import { QueryExecutionStatus } from '../../../utils/state_management/types';
 import { TransformationAddButton } from './add_transformation_button';
 import './query_workspace.scss';
 
@@ -36,10 +38,17 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
     transformServices.stageFields$,
     transformServices.stageFields$.getValue()
   );
+  const transformStepResults = useObservable(
+    transformServices.stepResults$,
+    transformServices.stepResults$.getValue()
+  );
 
+  const isQueryValid = queryEditorState.queryStatus?.status !== QueryExecutionStatus.ERROR;
   const queryRows: QueryRowItem[] = useMemo(
-    () => [{ refId: queryBuilder.refId, isHidden: queryEditorState.isHidden }],
-    [queryBuilder.refId, queryEditorState.isHidden]
+    () => [
+      { refId: queryBuilder.refId, isHidden: queryEditorState.isHidden, isValid: isQueryValid },
+    ],
+    [queryBuilder.refId, queryEditorState.isHidden, isQueryValid]
   );
   // TODO Single builder for now; the multi builder will resolve this from its rows.
   const getQueryRowBuilder = useCallback(
@@ -54,6 +63,7 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
     queryHandlers,
     transformPipeline,
     transformationService: transformServices,
+    transformStepResults,
   });
   const activeItemId = active.activeItemId;
 
@@ -111,14 +121,15 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
     [onAddTransformation, queryHandlers, queryRows.length, sections, transformServices]
   );
 
-  const activeMetadata = useMemo(() => {
+  const sectionPanelMeta = useMemo(() => {
     if (active.currentActive === 'query') {
       return {
         title: i18n.translate('explore.queryWorkspace.queryDetailTitle', {
           defaultMessage: 'Query',
         }),
         subtitle: active.activeItemId,
-        iconType: 'search',
+        iconType: 'database',
+        headerContent: <DatasetSelectWidget key={active.activeItemId} />,
       };
     }
 
@@ -140,11 +151,29 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
     return undefined;
   }, [active, transformPipeline, transformServices]);
 
+  // The active item's actions (hide / remove), same renderers and handlers as its list row.
+  const activeItemActions = useMemo(() => {
+    for (const section of sectionsWithActions) {
+      const item = section.items.find((i) => i.id === activeItemId);
+      if (item) {
+        return section.renderItemActions?.(item);
+      }
+    }
+    return undefined;
+  }, [activeItemId, sectionsWithActions]);
+
   const renderDetail = () => {
     if (active.currentActive === 'query') {
       const row = getQueryRowBuilder(active.activeItemId);
       if (!row) return null;
-      return <QueryPanel queryEditorState$={row.queryEditorState$} />;
+      // Keyed by row so switching queries remounts the editor
+      return (
+        <QueryPanel
+          key={row.refId}
+          queryState$={row.queryState$}
+          queryEditorState$={row.queryEditorState$}
+        />
+      );
     }
 
     if (active.currentActive === 'transformation') {
@@ -204,9 +233,12 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
               className="queryWorkspace__card"
             >
               <SectionPanel
-                title={activeMetadata?.title}
-                subtitle={activeMetadata?.subtitle}
-                iconType={activeMetadata?.iconType}
+                title={sectionPanelMeta?.title}
+                subtitle={sectionPanelMeta?.subtitle}
+                iconType={sectionPanelMeta?.iconType}
+                actions={activeItemActions}
+                headerContent={sectionPanelMeta?.headerContent}
+                activeType={active.currentActive}
               >
                 {renderDetail()}
               </SectionPanel>
