@@ -30,8 +30,8 @@ import { VARIABLE_VALUES_URL_KEY } from '../types';
  */
 export const useVariables = (containerVariables?: Variable[]) => {
   const { services } = useOpenSearchDashboards<ExploreServices>();
-  const { queryBuilder } = useQueryBuilderState();
   const { visualizationBuilderForEditor } = useVisualizationBuilder();
+  const { container } = useQueryBuilderState();
 
   // Create service & interpolation
   const variableService = useMemo(() => {
@@ -54,9 +54,9 @@ export const useVariables = (containerVariables?: Variable[]) => {
   // Wire interpolation service into queryBuilder
   useEffect(() => {
     if (interpolationService) {
-      queryBuilder.setInterpolationService(interpolationService);
+      container.setInterpolationService(interpolationService);
     }
-  }, [queryBuilder, interpolationService]);
+  }, [container, interpolationService]);
 
   // Refresh variable options whenever their queries or the time range change.
   useEffect(() => {
@@ -83,18 +83,23 @@ export const useVariables = (containerVariables?: Variable[]) => {
 
       visualizationBuilderForEditor.setVariables(interpolationService.getVariables());
 
-      const queryState = queryBuilder.queryState$.getValue();
-      const currentQuery = prepareQueryForLanguage(queryState).query;
-      if (!currentQuery || !interpolationService.hasVariables(currentQuery)) return;
+      container
+        .getAllRows()
+        .filter((row) => !row.getQueryEditorState().isHidden)
+        .forEach((row) => {
+          const queryState = row.queryState$.getValue();
+          const currentQuery = prepareQueryForLanguage(queryState).query;
+          if (!currentQuery || !interpolationService.hasVariables(currentQuery)) return;
 
-      const interpolated = interpolationService.interpolate(currentQuery, queryState.language);
-      if (interpolated === queryBuilder.lastExecutedInterpolatedQuery) return;
+          const interpolated = interpolationService.interpolate(currentQuery, queryState.language);
+          if (interpolated === row.lastExecutedInterpolatedQuery) return;
 
-      queryBuilder.executeQuery();
+          row.executeQuery();
+        });
     });
 
     return () => sub.unsubscribe();
-  }, [variableService, interpolationService, queryBuilder, visualizationBuilderForEditor]);
+  }, [variableService, interpolationService, container, visualizationBuilderForEditor]);
 
   // Sync variable values to URL
   useEffect(() => {

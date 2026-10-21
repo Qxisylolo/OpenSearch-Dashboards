@@ -3,14 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BehaviorSubject, Subscription, from, of, combineLatest } from 'rxjs';
-import { distinctUntilChanged, switchMap, debounceTime, filter, skip } from 'rxjs/operators';
+import { BehaviorSubject, Subscription, from, of } from 'rxjs';
+import { distinctUntilChanged, switchMap, filter } from 'rxjs/operators';
 import moment from 'moment';
 import { MutableRefObject } from 'react';
 import { firstValueFrom } from '@osd/std';
 import { isEqual } from 'lodash';
 import type { monaco } from '@osd/monaco';
-import { map } from 'rxjs/operators';
 import {
   EditorMode,
   QueryResultStatus,
@@ -38,25 +37,7 @@ import {
   showMissingDatasetWarning,
   handleAgentError,
 } from './utils';
-import { getServices as getExploreServices } from '../../../services/services';
-import {
-  QUERY_BUILDER_QUERY_STATE_KEY,
-  QUERY_EDITOR_STATE_KEY,
-  ActiveBottomPanelTab,
-} from '../types';
 import { getSourceTypeRegistry } from '../../../services/source_type_registry';
-
-// AbortControllers for active queries, keyed by query string
-// Currently only one query executing at a time
-// Use map to handle multiple queries in the future
-const activeQueryAbortControllers = new Map<string, AbortController>();
-
-export const abortAllActiveQueries = () => {
-  activeQueryAbortControllers.forEach((controller) => {
-    controller.abort();
-  });
-  activeQueryAbortControllers.clear();
-};
 
 export enum SupportLanguageType {
   ppl = 'PPL',
@@ -73,17 +54,16 @@ export interface QueryState {
 }
 
 export interface QueryEditorState {
+  isHidden?: boolean;
   queryStatus: QueryResultStatus;
   editorMode: EditorMode;
   promptModeIsAvailable: boolean;
   promptToQueryIsLoading: boolean;
 
   isQueryEditorDirty: boolean;
-  dateRange?: { from: string; to: string };
   userInitiatedQuery: boolean;
-  languageType: SupportLanguageType;
+  // languageType: SupportLanguageType;
   lastExecutedTranslatedQuery?: string; // last generated query
-  activeBottomPanelTab?: ActiveBottomPanelTab; // track which panel tab is active
 }
 
 export type QueryResultState = ISearchResult | undefined;
@@ -106,11 +86,10 @@ const initialQueryEditorState: QueryEditorState = {
   promptModeIsAvailable: false,
   promptToQueryIsLoading: false,
   isQueryEditorDirty: false,
-  dateRange: undefined,
   userInitiatedQuery: false, // user click the refresh button
-  languageType: SupportLanguageType.ppl,
+  // languageType: SupportLanguageType.ppl,
   lastExecutedTranslatedQuery: undefined,
-  activeBottomPanelTab: 'QUERY_TAB',
+  isHidden: false,
 };
 
 /**
@@ -131,44 +110,44 @@ export class QueryBuilder {
     isLoading: false,
     error: null,
   });
-  public variableNames$ = new BehaviorSubject<string[]>([]);
   private isInitialized = false;
   public editorRef: MutableRefObject<monaco.editor.IStandaloneCodeEditor | null> = {
     current: null,
   };
   private subscriptions = Array<Subscription>();
   private getServices: () => ExploreServices;
-  private interpolationService?: IVariableInterpolationService;
+  // Shared by every row and owned by the container
+  private readonly getInterpolationService: () => IVariableInterpolationService | undefined;
   public lastExecutedInterpolatedQuery?: string;
-  private onDatasetChangedCallback?: () => void;
 
-  constructor(getServices: () => ExploreServices) {
+  public refId: string;
+  // The query state seen by the previous query sync, to detect dataset/language changes.
+  private prevQueryState?: QueryState;
+  private readonly abortControllers = new Map<string, AbortController>();
+
+  constructor(
+    getServices: () => ExploreServices,
+    refId = 'A',
+    getInterpolationService: () => IVariableInterpolationService | undefined = () => undefined
+  ) {
     this.getServices = getServices;
+    this.refId = refId;
+    this.getInterpolationService = getInterpolationService;
   }
-  async init(options?: { savedQueryState?: QueryState }) {
+
+  async init(options?: {
+    savedQueryState?: QueryState;
+    savedEditorState?: Partial<QueryEditorState>;
+  }) {
     if (this.isInitialized) {
       return;
     }
 
-    let queryEditorStateFromUrl;
-    let queryStateFromUrl;
+    const languageType = options?.savedQueryState?.language ?? SupportLanguageType.ppl;
 
-    const urlStateStorage = this.getServices().osdUrlStateStorage;
-    if (urlStateStorage) {
-      queryEditorStateFromUrl =
-        urlStateStorage?.get<Partial<QueryEditorState>>(QUERY_EDITOR_STATE_KEY);
-      queryStateFromUrl = urlStateStorage?.get<QueryState>(QUERY_BUILDER_QUERY_STATE_KEY);
-    }
+    const preferredDataset = options?.savedQueryState?.dataset;
 
-    const languageType =
-      queryEditorStateFromUrl?.languageType ??
-      options?.savedQueryState?.language ??
-      SupportLanguageType.ppl;
-
-    const preferredDataset = queryStateFromUrl?.dataset ?? options?.savedQueryState?.dataset;
-
-    const queryOptions =
-      queryStateFromUrl?.queryOptions ?? options?.savedQueryState?.queryOptions ?? {};
+    const queryOptions = options?.savedQueryState?.queryOptions ?? {};
 
     // Retrieve the preloaded query state based on the language type for a new explore object,
     // or validate whether the URL dataset is compatible with the language type before proceeding.
@@ -182,26 +161,13 @@ export class QueryBuilder {
       preferredDataset
     );
 
-    this.updateQueryEditorState({ languageType: languageType as SupportLanguageType });
+    // this.updateQueryEditorState({ languageType: languageType as SupportLanguageType });
 
-    if (queryEditorStateFromUrl?.activeBottomPanelTab) {
-      this.updateQueryEditorState({
-        activeBottomPanelTab: queryEditorStateFromUrl.activeBottomPanelTab,
-      });
+    if (typeof options?.savedEditorState?.isHidden === 'boolean') {
+      this.updateQueryEditorState({ isHidden: options.savedEditorState.isHidden });
     }
 
-    // read isQueryEditorDirty from url to prevent losing state after reloading page
-    // only update when isQueryEditorDirty is true
-    if (
-      queryEditorStateFromUrl?.isQueryEditorDirty &&
-      typeof queryEditorStateFromUrl?.isQueryEditorDirty === 'boolean'
-    ) {
-      this.updateQueryEditorState({
-        isQueryEditorDirty: queryEditorStateFromUrl.isQueryEditorDirty,
-      });
-    }
-
-    const finalQuery = queryStateFromUrl?.query ?? options?.savedQueryState?.query ?? '';
+    const finalQuery = options?.savedQueryState?.query ?? '';
     // apply query
     const finalQueryState = {
       ...preloadedQueryState,
@@ -214,66 +180,17 @@ export class QueryBuilder {
 
     this.updateQueryState(finalQueryState);
     this.updateQueryEditorState({
+      // The preloaded dataset may only run its own default language.
       editorMode: EditorMode.Query,
       queryStatus: initialQueryStatus,
     });
 
-    this.setupGlobalDataRangeSync();
     this.setupQuerySync();
-    this.setupLanguageSync();
-    // start sync until dataview is ready
+    // The dataset decides the language now: a language switch keeps the dataset, so there's no
+    // default dataset to preload for it.
+    // this.setupLanguageSync();
     await this.waitForDatasetReady();
-    this.startUrlSync();
     this.setIsInitialized(true);
-  }
-
-  startUrlSync() {
-    const urlSync = combineLatest([
-      this.queryState$,
-      this.queryEditorState$.pipe(
-        map((s) => ({
-          languageType: s.languageType,
-          isQueryEditorDirty: s.isQueryEditorDirty,
-          ...(s.activeBottomPanelTab ? { activeBottomPanelTab: s.activeBottomPanelTab } : {}),
-        }))
-      ),
-    ])
-      .pipe(debounceTime(500))
-      .subscribe(([queryState, editorState]) => {
-        this.syncToUrl(QUERY_BUILDER_QUERY_STATE_KEY, queryState);
-        this.syncToUrl(QUERY_EDITOR_STATE_KEY, editorState);
-      });
-
-    this.subscriptions.push(urlSync);
-  }
-
-  private syncToUrl(place: string, state: QueryState | Partial<QueryEditorState>) {
-    const urlStateStorage = this.getServices()?.osdUrlStateStorage;
-
-    if (urlStateStorage) {
-      urlStateStorage.set(place, state, { replace: true });
-    }
-  }
-
-  // Subscribe to sync date range with global time filter
-  private setupGlobalDataRangeSync() {
-    const dataRangeSyncSub = this.queryEditorState$
-      .pipe(
-        map((state) => state?.dateRange),
-        distinctUntilChanged((prev, curr) => isEqual(prev, curr))
-      )
-      .subscribe((dateRange) => {
-        if (dateRange && this.getServices().data?.query?.timefilter?.timefilter) {
-          const timefilter = this.getServices().data.query.timefilter.timefilter;
-          const currentTimefilterRange = timefilter.getTime();
-
-          if (!isEqual(currentTimefilterRange, dateRange)) {
-            timefilter.setTime(dateRange);
-          }
-        }
-      });
-
-    this.subscriptions.push(dataRangeSyncSub);
   }
 
   private async handleDatasetChange(dataset?: Dataset): Promise<DataView | undefined> {
@@ -294,23 +211,21 @@ export class QueryBuilder {
       .pipe(
         distinctUntilChanged((prev, curr) => isEqual(prev, curr)),
         switchMap((newQuery) => {
-          const currentQuery = this.getServices().data.query.queryString.getQuery();
-          const isDatasetChanged = !isEqual(currentQuery?.dataset, newQuery?.dataset);
-          const isLanguageChanged = !isEqual(currentQuery?.language, newQuery?.language);
+          // Compare against this row's own previous state: the global query string reflects
+          // whichever row is selected.
+          const prevQuery = this.prevQueryState;
+          this.prevQueryState = newQuery;
+          const isDatasetChanged = !isEqual(prevQuery?.dataset, newQuery?.dataset);
+          const isLanguageChanged = !isEqual(prevQuery?.language, newQuery?.language);
 
-          const cleanQuery = getSourceTypeRegistry().isMetricsLanguage(newQuery?.language)
-            ? newQuery
-            : { ...newQuery, queryOptions: undefined };
-
-          // sync query state with global queryStringManager
-          this.getServices().data.query.queryString.setQuery(cleanQuery);
+          // // languageType mirrors the query's language (set by the dataset or the language toggle).
+          // if (isLanguageChanged && newQuery?.language) {
+          //   this.updateQueryEditorState({ languageType: newQuery.language as SupportLanguageType });
+          // }
 
           // sync dataset change
           // check isLanguageChanged and isInitialized for the initial sync
           if (isDatasetChanged || isLanguageChanged || !this.isInitialized) {
-            if (isDatasetChanged && this.isInitialized) {
-              this.onDatasetChangedCallback?.();
-            }
             this.datasetView$.next({ ...this.datasetView$.getValue(), isLoading: true });
             return from(this.handleDatasetChange(newQuery.dataset));
           }
@@ -340,35 +255,6 @@ export class QueryBuilder {
       });
 
     this.subscriptions.push(querySyncSub);
-  }
-
-  private setupLanguageSync() {
-    const languageSyncSub = this.queryEditorState$
-      .pipe(
-        map((state) => state?.languageType),
-        distinctUntilChanged(), // Skip initial preparation
-        skip(1),
-        filter((languageType) => languageType !== SupportLanguageType.ai),
-        switchMap((languageType) => {
-          // set loading to block user execution actions during async gap
-          this.datasetView$.next({ dataView: undefined, isLoading: true, error: null });
-          return from(getPreloadedQueryState(this.getServices(), languageType));
-        }),
-        filter((newQuery) => newQuery !== null && newQuery !== undefined)
-      )
-      .subscribe({
-        next: (newQuery) => {
-          this.updateQueryState(newQuery);
-        },
-        error: (error) => {
-          this.datasetView$.next({ dataView: undefined, isLoading: false, error: error.message });
-          this.getServices().notifications?.toasts.addError(error, {
-            title: 'Error switching language',
-          });
-        },
-      });
-
-    this.subscriptions.push(languageSyncSub);
   }
 
   private async checkAgentAvailability(_datasourceId?: string) {
@@ -438,7 +324,9 @@ export class QueryBuilder {
       return;
     }
 
-    const currentQuery = this.getServices().data.query.queryString.getQuery();
+    // const currentQuery = this.getServices().data.query.queryString.getQuery();
+    // Use this row's own query: the global one belongs to the selected row only.
+    const currentQuery = this.queryState$.getValue();
     if (!currentQuery.dataset) {
       showMissingDatasetWarning(this.getServices().notifications.toasts);
       return;
@@ -466,10 +354,13 @@ export class QueryBuilder {
 
         await queryExecution({
           services: this.getServices(),
+          query: this.queryState$.getValue(),
           queryString,
           updateEditorStateFn: this.updateQueryEditorState.bind(this),
           updateResultFn: this.updateQueryResultForEditor.bind(this),
-          activeQueryAbortControllers,
+          activeQueryAbortControllers: this.abortControllers,
+          // one request per row; a new run cancels the previous one.
+          abortKey: this.refId,
         });
 
         return;
@@ -508,10 +399,12 @@ export class QueryBuilder {
 
       await queryExecution({
         services: this.getServices(),
+        query: this.queryState$.getValue(),
         queryString,
         updateEditorStateFn: this.updateQueryEditorState.bind(this),
         updateResultFn: this.updateQueryResultForEditor.bind(this),
-        activeQueryAbortControllers,
+        activeQueryAbortControllers: this.abortControllers,
+        abortKey: this.refId,
       });
     } catch (error) {
       handleAgentError(this.getServices().notifications.toasts, error);
@@ -581,36 +474,32 @@ export class QueryBuilder {
     // prepare querystring for execution, add clause when query is '' for PPL
     let queryString = this.prepareQueryStringToCacheKey(currentQuery);
 
-    if (this.interpolationService && this.interpolationService.hasVariables(queryString)) {
-      queryString = this.interpolationService.interpolate(queryString, currentQuery.language);
+    const interpolationService = this.getInterpolationService();
+    if (interpolationService && interpolationService.hasVariables(queryString)) {
+      queryString = interpolationService.interpolate(queryString, currentQuery.language);
     }
 
     this.lastExecutedInterpolatedQuery = queryString;
 
     await queryExecution({
       services: this.getServices(),
+      query: this.queryState$.getValue(),
       queryString,
       updateEditorStateFn: this.updateQueryEditorState.bind(this),
       updateResultFn: this.updateQueryResultForEditor.bind(this),
-      activeQueryAbortControllers,
+      activeQueryAbortControllers: this.abortControllers,
+      abortKey: this.refId,
     });
+  }
+
+  abortActiveQueries() {
+    this.abortControllers.forEach((controller) => controller.abort());
+    this.abortControllers.clear();
   }
 
   private prepareQueryStringToCacheKey(query: Query) {
     const preparedQuery = prepareQueryForLanguage(query);
     return preparedQuery.query;
-  }
-
-  setInterpolationService(service: IVariableInterpolationService) {
-    this.interpolationService = service;
-  }
-
-  setVariableNames(names: string[]) {
-    this.variableNames$.next(names);
-  }
-
-  getVariableNames(): string[] {
-    return this.variableNames$.value;
   }
 
   setEditor(editor: monaco.editor.IStandaloneCodeEditor | null) {
@@ -619,12 +508,6 @@ export class QueryBuilder {
 
   getEditor(): monaco.editor.IStandaloneCodeEditor | null {
     return this.editorRef.current;
-  }
-
-  // register a callback that fires when the dataset changes,
-  // for example, used to clear the transformation pipeline on dataset switch.
-  setOnDatasetChanged(callback: () => void) {
-    this.onDatasetChangedCallback = callback;
   }
 
   getQueryEditorState() {
@@ -639,38 +522,6 @@ export class QueryBuilder {
     this.queryState$.complete();
     this.resultState$.complete();
     this.datasetView$.complete();
-    this.variableNames$.complete();
-    abortAllActiveQueries();
+    this.abortActiveQueries();
   }
-
-  reset(): void {
-    this.dispose();
-    this.queryState$ = new BehaviorSubject<QueryState>({
-      query: '',
-      language: 'PPL',
-      dataset: undefined,
-    });
-
-    this.queryEditorState$ = new BehaviorSubject<QueryEditorState>(initialQueryEditorState);
-    this.resultState$ = new BehaviorSubject<QueryResultState>(undefined);
-    this.datasetView$ = new BehaviorSubject<DatasetViewState>({
-      dataView: undefined,
-      isLoading: false,
-      error: null,
-    });
-    this.variableNames$ = new BehaviorSubject<string[]>([]);
-    this.editorRef.current = null;
-    this.isInitialized = false;
-  }
-}
-
-// Singleton instance
-let queryBuilderInstance: QueryBuilder | null = null;
-
-export function getQueryBuilder(): QueryBuilder {
-  if (!queryBuilderInstance) {
-    queryBuilderInstance = new QueryBuilder(() => getExploreServices());
-  }
-
-  return queryBuilderInstance;
 }

@@ -21,14 +21,24 @@ jest.mock('../../../../../data/public', () => ({
   useCancelButtonTiming: jest.fn((v) => v),
 }));
 
-const buildState = (overrides: Record<string, any> = {}) => ({
+// const buildState = (overrides: Record<string, any> = {}) => ({
+//   queryEditorState: {
+//     isQueryEditorDirty: false,
+//     dateRange: undefined,
+//     userInitiatedQuery: false,
+//     queryStatus: { status: QueryExecutionStatus.UNINITIALIZED },
+//     ...overrides,
+//   },
+// });
+// dateRange is the shared range of all queries (top-level), not part of the row's editor state.
+const buildState = ({ dateRange, ...overrides }: Record<string, any> = {}) => ({
   queryEditorState: {
     isQueryEditorDirty: false,
-    dateRange: undefined,
     userInitiatedQuery: false,
     queryStatus: { status: QueryExecutionStatus.UNINITIALIZED },
     ...overrides,
   },
+  dateRange,
 });
 
 beforeEach(() => {

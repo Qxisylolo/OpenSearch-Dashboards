@@ -35,11 +35,16 @@
     border-left: $euiBorderThin;
   }
 
+  &__headerContent {
+    min-width: 0;
+    max-width: 360px;
+  }
+
   &__content {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
-    padding: $euiSizeM;
+    padding: $euiSizeS;
   }
 }
 
@@ -97,6 +102,16 @@
     background: transparentize($euiColorWarning, 0.9);
     border-color: $euiColorWarning;
     box-shadow: inset 3px 0 0 $euiColorWarning;
+  }
+
+  // Failed query / broken transformation.
+  &__button.queryWorkspaceSectionItem__button-isInvalid {
+    box-shadow: inset 3px 0 0 $euiColorDanger;
+
+    &.queryWorkspaceSectionItem__button-isActive {
+      background: transparentize($euiColorDanger, 0.9);
+      border-color: $euiColorDanger;
+    }
   }
 
   &__button-isHidden {

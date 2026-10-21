@@ -23,7 +23,7 @@ jest.mock('../../../../../opensearch_dashboards_react/public', () => ({
 jest.mock('../hooks/use_query_builder_state', () => ({ useQueryBuilderState: jest.fn() }));
 jest.mock('../hooks/use_editor_operations', () => ({ useEditorOperations: jest.fn() }));
 jest.mock('../query_builder/query_builder', () => ({
-  abortAllActiveQueries: jest.fn(),
+  // abortAllActiveQueries: jest.fn(), // removed; top nav cancels via container.cancelAll
   SupportLanguageType: {
     ppl: 'PPL',
     promQL: 'PROMQL',
@@ -44,7 +44,6 @@ const buildQueryBuilderState = (options: Record<string, any> = {}) => ({
     queryStatus: { status: QueryExecutionStatus.UNINITIALIZED },
     editorMode: EditorMode.Query,
     userInitiatedQuery: false,
-    activeBottomPanelTab: 'QUERY_TAB',
     languageType: SupportLanguageType.ppl,
   },
   datasetView: { dataView: undefined },
@@ -53,6 +52,11 @@ const buildQueryBuilderState = (options: Record<string, any> = {}) => ({
     updateQueryState: jest.fn(),
     onQueryExecutionSubmit: jest.fn(),
     clearResultState: jest.fn(),
+  },
+  // Run / cancel act on every query row through the container.
+  container: {
+    executeAll: jest.fn(),
+    cancelAll: jest.fn(),
   },
   ...options,
 });
@@ -116,11 +120,10 @@ describe('TopNav', () => {
       onQueryExecutionSubmit: jest.fn(),
       clearResultState: jest.fn(),
     };
-    (useQueryBuilderState as jest.Mock).mockReturnValue(
-      buildQueryBuilderState({
-        queryBuilder,
-      })
-    );
+    const state = buildQueryBuilderState({
+      queryBuilder,
+    });
+    (useQueryBuilderState as jest.Mock).mockReturnValue(state);
     (useEditorOperations as jest.Mock).mockReturnValue({
       getEditorRef: jest.fn().mockReturnValue(null),
       getEditorText: jest.fn().mockReturnValue('source=stale_logs'),
@@ -134,6 +137,19 @@ describe('TopNav', () => {
     expect(queryBuilder.updateQueryState).not.toHaveBeenCalledWith({
       query: 'source=stale_logs',
     });
-    expect(queryBuilder.onQueryExecutionSubmit).toHaveBeenCalledTimes(1);
+    // expect(queryBuilder.onQueryExecutionSubmit).toHaveBeenCalledTimes(1);
+    expect(state.container.executeAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels every query row', () => {
+    const state = buildQueryBuilderState();
+    (useQueryBuilderState as jest.Mock).mockReturnValue(state);
+
+    render(<TopNav />);
+    const props = mockTopNavMenu.mock.calls[mockTopNavMenu.mock.calls.length - 1][0];
+    const submitButton = props.customSubmitButton;
+    submitButton.props.onCancel();
+
+    expect(state.container.cancelAll).toHaveBeenCalledTimes(1);
   });
 });

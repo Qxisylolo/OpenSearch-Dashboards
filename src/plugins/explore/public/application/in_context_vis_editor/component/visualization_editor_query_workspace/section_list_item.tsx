@@ -33,10 +33,13 @@ export const SectionListItem = ({
     <div className="queryWorkspaceSectionItem__buttonWrapper">
       <button
         className={[
+          // use "osd-resetFocusState" to not apply the default focus state
+          'osd-resetFocusState',
           'queryWorkspaceSectionItem__button',
           `queryWorkspaceSectionItem__button--${sectionId}`,
           isActive ? 'queryWorkspaceSectionItem__button-isActive' : '',
           item.isHidden ? 'queryWorkspaceSectionItem__button-isHidden' : '',
+          item.isValid === false ? 'queryWorkspaceSectionItem__button-isInvalid' : '',
         ]
           .filter(Boolean)
           .join(' ')}

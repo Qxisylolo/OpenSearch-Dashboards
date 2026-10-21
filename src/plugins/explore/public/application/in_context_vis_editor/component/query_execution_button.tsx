@@ -21,9 +21,8 @@ export const QueryExecutionButton: React.FC<QueryExecutionButtonProps> = ({
   onClick,
   onCancel,
 }) => {
-  const { queryEditorState } = useQueryBuilderState();
+  const { queryEditorState, dateRange } = useQueryBuilderState();
   const isQueryEditorDirty = queryEditorState.isQueryEditorDirty;
-  const dateRange = queryEditorState.dateRange;
 
   const isRunning =
     queryEditorState.userInitiatedQuery &&

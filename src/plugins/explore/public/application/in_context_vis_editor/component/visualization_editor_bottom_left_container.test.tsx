@@ -46,8 +46,8 @@ jest.mock('./vis_editor_no_results', () => ({
 jest.mock('./vis_editor_loading_state', () => ({
   VisEditorLoadingState: () => <div data-test-subj="vis-loading" />,
 }));
-jest.mock('./visualization_editor_query_panel', () => ({
-  QueryPanel: () => <div data-test-subj="query-panel" />,
+jest.mock('./visualization_editor_query_workspace/query_workspace', () => ({
+  QueryWorkspace: () => <div data-test-subj="query-workspace" />,
 }));
 jest.mock('../../../components/tabs/error_guard/error_code_block', () => ({
   ErrorCodeBlock: ({ title, text }: any) => (
@@ -68,7 +68,6 @@ const mockQueryBuilder = {
   queryEditorState$: mockQueryEditorState$,
   resultState$: mockResultState$,
   updateQueryEditorState: jest.fn(),
-  setOnDatasetChanged: jest.fn(),
 };
 
 const buildState = (options: Record<string, any>) => ({
@@ -88,12 +87,12 @@ beforeEach(() => {
 });
 
 describe('ResizableQueryPanelAndVisualization', () => {
-  it('renders QueryPanel', () => {
+  it('renders QueryWorkspace', () => {
     (useQueryBuilderState as jest.Mock).mockReturnValue(
       buildState({ status: QueryExecutionStatus.UNINITIALIZED })
     );
     render(<ResizableQueryPanelAndVisualization />);
-    expect(screen.getByTestId('query-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('query-workspace')).toBeInTheDocument();
   });
 
   it('renders VisEditorUninitialized when status is UNINITIALIZED', () => {

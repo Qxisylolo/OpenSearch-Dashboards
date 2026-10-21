@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { useObservable } from 'react-use';
 import moment from 'moment';
 import { i18n } from '@osd/i18n';
@@ -13,8 +13,6 @@ import {
   EuiTitle,
   EuiErrorBoundary,
   EuiIcon,
-  EuiTabs,
-  EuiTab,
   EuiPanel,
 } from '@elastic/eui';
 import { TimeRange } from 'src/plugins/data/common';
@@ -22,17 +20,14 @@ import { QueryExecutionStatus } from '../../utils/state_management/types';
 import { VisEditorUninitialized } from './vis_editor_uninitialized';
 import { VisEditorNoResults } from './vis_editor_no_results';
 import { VisEditorLoadingState } from './vis_editor_loading_state';
-import { useSearchContext } from '../../../components/query_panel/utils/use_search_context';
-import { QueryPanel } from './visualization_editor_query_panel';
+import { QueryWorkspace } from './visualization_editor_query_workspace/query_workspace';
 import { useQueryBuilderState } from '../hooks/use_query_builder_state';
 import { ErrorCodeBlock } from '../../../components/tabs/error_guard/error_code_block';
 import { EditorPanel } from './editor_panel';
 import { useVisualizationBuilder } from '../hooks/use_visualization_builder';
 
 import '../visualization_editor.scss';
-import { useTransformationService, TransformPanel } from '../../../components/data_transformations';
-
-type ActiveTab = 'QUERY_TAB' | 'TRANSFORM_TAB';
+import { useTransformationService } from '../../../components/data_transformations';
 
 const errorDefaultTitle = i18n.translate('explore.errorPanel.defaultTitle', {
   defaultMessage: 'An error occurred while executing the query',
@@ -44,19 +39,9 @@ const typeText = i18n.translate('explore.errorPanel.type', {
   defaultMessage: 'Type',
 });
 
-const queryTabLabel = i18n.translate('explore.bottomPanel.queryTab', {
-  defaultMessage: 'Query',
-});
-const transformTabLabel = i18n.translate('explore.bottomPanel.transformTab', {
-  defaultMessage: 'Transform',
-});
-
 export const ResizableQueryPanelAndVisualization = () => {
   const { queryBuilder, queryEditorState } = useQueryBuilderState();
   const queryStatus = queryEditorState.queryStatus;
-  const [activeTab, setActiveTab] = useState<ActiveTab>(
-    queryEditorState.activeBottomPanelTab ?? 'QUERY_TAB'
-  );
   const { visualizationBuilderForEditor } = useVisualizationBuilder();
 
   const transformServices = useTransformationService(visualizationBuilderForEditor, {
@@ -64,10 +49,6 @@ export const ResizableQueryPanelAndVisualization = () => {
       queryBuilder.updateQueryEditorState({ isQueryEditorDirty: true });
     }, [queryBuilder]),
   });
-
-  useEffect(() => {
-    queryBuilder.updateQueryEditorState({ activeBottomPanelTab: activeTab });
-  }, [activeTab, queryBuilder]);
 
   const renderVis = () => {
     if (queryStatus.status === QueryExecutionStatus.NO_RESULTS) {
@@ -133,6 +114,8 @@ export const ResizableQueryPanelAndVisualization = () => {
             <EuiResizablePanel initialSize={30} minSize="20%" paddingSize="none" hasBorder={false}>
               <EuiPanel
                 paddingSize="none"
+                color="transparent"
+                hasBorder={false}
                 className="multiTabsPanel"
                 style={{
                   height: '100%',
@@ -140,30 +123,7 @@ export const ResizableQueryPanelAndVisualization = () => {
                   flexDirection: 'column',
                 }}
               >
-                <EuiTabs size="s">
-                  <EuiTab
-                    isSelected={activeTab === 'QUERY_TAB'}
-                    onClick={() => setActiveTab('QUERY_TAB')}
-                    data-test-subj="queryPanelTab"
-                  >
-                    {queryTabLabel}
-                  </EuiTab>
-                  <EuiTab
-                    isSelected={activeTab === 'TRANSFORM_TAB'}
-                    onClick={() => setActiveTab('TRANSFORM_TAB')}
-                    data-test-subj="transformPanelTab"
-                  >
-                    {transformTabLabel}
-                  </EuiTab>
-                </EuiTabs>
-
-                {activeTab === 'QUERY_TAB' ? (
-                  <QueryPanel queryEditorState$={queryBuilder.queryEditorState$} />
-                ) : (
-                  <EuiPanel hasBorder={false} hasShadow={false} paddingSize="s">
-                    <TransformPanel transformationService={transformServices} />
-                  </EuiPanel>
-                )}
+                <QueryWorkspace transformServices={transformServices} />
               </EuiPanel>
             </EuiResizablePanel>
           </>
@@ -174,10 +134,12 @@ export const ResizableQueryPanelAndVisualization = () => {
 };
 
 export const VisualizationContainer = React.memo(() => {
-  const searchContext = useSearchContext();
+  // const searchContext = useSearchContext();
 
   const { visualizationBuilderForEditor: visualizationBuilder } = useVisualizationBuilder();
-  const { queryBuilder } = useQueryBuilderState();
+  // const { queryBuilder } = useQueryBuilderState();
+  // The vis renders against the shared date range; brushing changes it for every query.
+  const { queryBuilder, container, dateRange } = useQueryBuilderState();
 
   const resultState = useObservable(queryBuilder.resultState$, undefined);
 
@@ -193,32 +155,40 @@ export const VisualizationContainer = React.memo(() => {
   const onSelectTimeRange = useCallback(
     (timeRange?: TimeRange) => {
       if (timeRange) {
-        queryBuilder.updateQueryEditorState({
+        // queryBuilder.updateQueryEditorState({
+        //   dateRange: {
+        //     from: moment(timeRange.from).toISOString(),
+        //     to: moment(timeRange.to).toISOString(),
+        //   },
+        // });
+        //
+        // queryBuilder.clearResultState();
+        // queryBuilder.updateQueryEditorState({
+        //   queryStatus: {
+        //     status: QueryExecutionStatus.UNINITIALIZED,
+        //     elapsedMs: undefined,
+        //     startTime: undefined,
+        //     error: undefined,
+        //   },
+        // });
+        // queryBuilder.executeQuery();
+        container.updateMultiQueryEditorState({
           dateRange: {
             from: moment(timeRange.from).toISOString(),
             to: moment(timeRange.to).toISOString(),
           },
         });
-
-        queryBuilder.clearResultState();
-        queryBuilder.updateQueryEditorState({
-          queryStatus: {
-            status: QueryExecutionStatus.UNINITIALIZED,
-            elapsedMs: undefined,
-            startTime: undefined,
-            error: undefined,
-          },
-        });
-        queryBuilder.executeQuery();
+        // executeQuery clears each row's result and resets its status itself.
+        container.executeAll({ userInitiated: false });
       }
     },
-    [queryBuilder]
+    [container]
   );
 
   return (
     <EditorPanel>
       {visualizationBuilder.renderVisualization({
-        timeRange: searchContext?.timeRange,
+        timeRange: dateRange,
         onSelectTimeRange,
       })}
     </EditorPanel>

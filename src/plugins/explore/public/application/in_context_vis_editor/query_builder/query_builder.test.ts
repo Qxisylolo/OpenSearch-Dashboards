@@ -138,26 +138,25 @@ describe('QueryBuilder', () => {
       expect(builder.queryState$.value.language).toBe('PPL');
     });
 
-    it('load query from URL state and prioritize it when available', async () => {
+    it('hydrates from savedQueryState only, ignoring URL state', async () => {
       services.osdUrlStateStorage = {
-        get: jest.fn((key: string) => {
-          if (key === '_eq') return { query: 'source = metrics', language: 'PPL' };
-          if (key === '_e') return { languageType: SupportLanguageType.ppl };
-          return null;
-        }),
+        get: jest.fn(() => ({ query: 'source = from_url', language: 'PPL' })),
         set: jest.fn(),
       } as any;
 
       await builder.init({
         savedQueryState: { query: 'source = logs', language: 'PPL', dataset: undefined },
       });
-      expect(builder.queryState$.value.query).toBe('source = metrics');
+      expect(services.osdUrlStateStorage.get).not.toHaveBeenCalled();
+      expect(builder.queryState$.value.query).toBe('source = logs');
       expect(builder.queryEditorState$.value.languageType).toBe('PPL');
     });
 
     it('sets up subscriptions', async () => {
       await builder.init();
-      expect((builder as any).subscriptions.length).toBe(4);
+      // expect((builder as any).subscriptions.length).toBe(2);
+      // Only the query sync: the language follows the query, so there's no language sync.
+      expect((builder as any).subscriptions.length).toBe(1);
     });
   });
 
@@ -219,29 +218,6 @@ describe('QueryBuilder', () => {
     });
   });
 
-  describe('reset', () => {
-    it('restores initial state after modifications', () => {
-      builder.updateQueryState({ query: 'source = logs' });
-      builder.updateQueryEditorState({ promptModeIsAvailable: true });
-      builder.reset();
-
-      expect(builder.queryState$.value).toEqual({ query: '', language: 'PPL', dataset: undefined });
-      expect(builder.queryEditorState$.value.promptModeIsAvailable).toBe(false);
-      expect(builder.resultState$.value).toBeUndefined();
-      expect(builder.datasetView$.value).toEqual({
-        dataView: undefined,
-        isLoading: false,
-        error: null,
-      });
-    });
-
-    it('resets editorRef to null', () => {
-      builder.setEditor({ getValue: jest.fn() } as any);
-      builder.reset();
-      expect(builder.getEditor()).toBeNull();
-    });
-  });
-
   describe('waitForDatasetReady', () => {
     it('waits until isLoading becomes false', async () => {
       builder.datasetView$.next({ dataView: undefined, isLoading: true, error: null });
@@ -261,6 +237,34 @@ describe('QueryBuilder', () => {
         query: 'source = logs',
       });
     });
+    it('interpolates with the interpolation service current at execution time', async () => {
+      const makeService = (value: string) => ({
+        hasVariables: jest.fn(() => true),
+        interpolate: jest.fn(() => value),
+      });
+      let current: ReturnType<typeof makeService> | undefined = makeService('source = first');
+      const row = new QueryBuilder(
+        () => services,
+        'B',
+        () => current as any
+      );
+      row.setIsInitialized(true);
+      row.datasetView$.next({ dataView: { id: 'logs' } as any, isLoading: false, error: null });
+
+      await row.executeQuery();
+      expect(row.lastExecutedInterpolatedQuery).toBe('source = first');
+
+      // The container replaced its service: the row picks it up without being told.
+      current = makeService('source = second');
+      await row.executeQuery();
+      expect(row.lastExecutedInterpolatedQuery).toBe('source = second');
+
+      current = undefined;
+      await row.executeQuery();
+      expect(row.lastExecutedInterpolatedQuery).toBe('source = logs');
+      row.dispose();
+    });
+
     it('does nothing when datasetView has no dataView', async () => {
       builder.setIsInitialized(true);
       // datasetView has no dataView by default
@@ -371,14 +375,15 @@ describe('QueryBuilder', () => {
         getValue: jest.fn().mockReturnValue('question'),
       } as any);
 
-      services.data.query.queryString.getQuery.mockReturnValue({
+      // callAgent reads the row's own query state, not the global query string.
+      builder.updateQueryState({
         query: '',
         language: 'PromQL',
         dataset: {
           id: 'prom-1',
           title: 'prometheus',
           type: 'PROMETHEUS',
-        },
+        } as any,
       });
 
       (generatePromQLWithAgUi as jest.Mock).mockResolvedValue({
@@ -395,14 +400,14 @@ describe('QueryBuilder', () => {
         getValue: jest.fn().mockReturnValue('question'),
       } as any);
 
-      services.data.query.queryString.getQuery.mockReturnValue({
+      builder.updateQueryState({
         query: '',
         language: 'PPL',
         dataset: {
           id: 'ppl-1',
           title: 'ppl',
           type: 'PPL',
-        },
+        } as any,
       });
 
       const mockApiResponse = {
@@ -414,30 +419,6 @@ describe('QueryBuilder', () => {
       expect(builder.queryEditorState$.value.lastExecutedTranslatedQuery).toBe(
         mockApiResponse.query
       );
-    });
-  });
-
-  describe('syncToUrl', () => {
-    it('syncs state to URL when osdUrlStateStorage is available', () => {
-      const setSpy = jest.fn();
-      services.osdUrlStateStorage = {
-        get: jest.fn(),
-        set: setSpy,
-      } as any;
-
-      (builder as any).syncToUrl('_eq', { query: 'test', language: 'PPL' });
-      expect(setSpy).toHaveBeenCalledWith(
-        '_eq',
-        { query: 'test', language: 'PPL' },
-        { replace: true }
-      );
-    });
-
-    it('does nothing when osdUrlStateStorage is not available', () => {
-      services.osdUrlStateStorage = null;
-      expect(() => {
-        (builder as any).syncToUrl('_eq', { query: 'test' });
-      }).not.toThrow();
     });
   });
 
@@ -514,34 +495,6 @@ describe('QueryBuilder', () => {
     expect(builder.queryEditorState$.value.promptModeIsAvailable).toBe(true);
   });
 
-  describe('setupGlobalDataRangeSync', () => {
-    it('syncs dateRange to timefilter when dateRange changes', async () => {
-      await builder.init();
-      builder.updateQueryEditorState({
-        dateRange: { from: 'now-1h', to: 'now' },
-      });
-
-      expect(services.data.query.timefilter.timefilter.setTime).toHaveBeenCalledWith({
-        from: 'now-1h',
-        to: 'now',
-      });
-    });
-
-    it('does not sync when dateRange is the same', async () => {
-      await builder.init();
-      const setTimeSpy = jest.spyOn(services.data.query.timefilter.timefilter, 'setTime');
-      services.data.query.timefilter.timefilter.getTime = jest
-        .fn()
-        .mockReturnValue({ from: 'now-1h', to: 'now' });
-
-      builder.updateQueryEditorState({
-        dateRange: { from: 'now-1h', to: 'now' },
-      });
-
-      expect(setTimeSpy).not.toHaveBeenCalled();
-    });
-  });
-
   describe("a registered Metrics source's own language", () => {
     const dataset = { id: 'my-metrics', title: 'My metrics', type: 'MY_DATASET_TYPE' } as any;
     beforeEach(() => {
@@ -563,7 +516,7 @@ describe('QueryBuilder', () => {
     });
     afterEach(() => setSourceTypeRegistry(new SourceTypeRegistryService()));
 
-    it('keeps the saved query options on init and passes them to the query string', async () => {
+    it('keeps the saved query options on init', async () => {
       await builder.init({
         savedQueryState: {
           query: 'SELECT 1',
@@ -574,14 +527,9 @@ describe('QueryBuilder', () => {
       });
 
       expect(builder.queryState$.value.queryOptions).toEqual({ maxDataPoints: 50 });
-      expect(services.data.query.queryString.setQuery).toHaveBeenLastCalledWith(
-        expect.objectContaining({ language: 'MY_SQL', queryOptions: { maxDataPoints: 50 } })
-      );
 
       builder.updateQueryOptions({ maxDataPoints: 75 });
-      expect(services.data.query.queryString.setQuery).toHaveBeenLastCalledWith(
-        expect.objectContaining({ queryOptions: { maxDataPoints: 75 } })
-      );
+      expect(builder.queryState$.value.queryOptions).toEqual({ maxDataPoints: 75 });
     });
 
     it('still drops query options for a logs language', async () => {
@@ -591,22 +539,10 @@ describe('QueryBuilder', () => {
       });
 
       expect(builder.queryState$.value.queryOptions).toBeUndefined();
-      expect(services.data.query.queryString.setQuery).toHaveBeenLastCalledWith(
-        expect.objectContaining({ language: 'PPL', queryOptions: undefined })
-      );
     });
   });
 
   describe('setupQuerySync', () => {
-    it('syncs query to global queryStringManager', async () => {
-      await builder.init();
-      builder.updateQueryState({ query: 'source = logs' });
-
-      expect(services.data.query.queryString.setQuery).toHaveBeenCalledWith(
-        expect.objectContaining({ query: 'source = logs' })
-      );
-    });
-
     it('handles dataset changes', async () => {
       await builder.init();
 
@@ -638,39 +574,153 @@ describe('QueryBuilder', () => {
     });
   });
 
-  describe('setupLanguageSync', () => {
-    it('updates query state when language type changes', async () => {
-      await builder.init();
+  // describe('setupLanguageSync', () => {
+  //   it('updates query state when language type changes', async () => {
+  //     await builder.init();
 
-      const newQueryState = {
+  //     const newQueryState = {
+  //       query: '',
+  //       language: 'PromQL',
+  //       dataset: { id: 'prom', title: 'prometheus', type: 'PROMETHEUS' },
+  //     };
+  //     (getPreloadedQueryState as jest.Mock).mockResolvedValue(newQueryState);
+
+  //     builder.updateQueryEditorState({ languageType: SupportLanguageType.promQL });
+
+  //     await new Promise((resolve) => setTimeout(resolve, 100));
+
+  //     expect(builder.queryState$.value.language).toBe('PromQL');
+  //     expect(builder.queryState$.value.dataset).toEqual(newQueryState.dataset);
+  //   });
+
+  //   it('handles language switch errors', async () => {
+  //     await builder.init();
+
+  //     const error = new Error('Failed to load dataset');
+  //     (getPreloadedQueryState as jest.Mock).mockRejectedValue(new Error('Failed to load dataset'));
+
+  //     builder.updateQueryEditorState({ languageType: SupportLanguageType.promQL });
+
+  //     await new Promise((resolve) => setTimeout(resolve, 100));
+
+  //     expect(builder.datasetView$.value.error).toBe('Failed to load dataset');
+  //     expect(services.notifications.toasts.addError).toHaveBeenCalledWith(error, {
+  //       title: 'Error switching language',
+  //     });
+  //   });
+  // });
+
+  describe('languageType follows the query language', () => {
+    it("is set from the preloaded query's language on init", async () => {
+      (getPreloadedQueryState as jest.Mock).mockResolvedValue({
         query: '',
-        language: 'PromQL',
+        language: 'PROMQL',
         dataset: { id: 'prom', title: 'prometheus', type: 'PROMETHEUS' },
-      };
-      (getPreloadedQueryState as jest.Mock).mockResolvedValue(newQueryState);
+      });
+      await builder.init({ savedQueryState: { query: 'up', language: 'PROMQL' } });
 
-      builder.updateQueryEditorState({ languageType: SupportLanguageType.promQL });
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect(builder.queryState$.value.language).toBe('PromQL');
-      expect(builder.queryState$.value.dataset).toEqual(newQueryState.dataset);
+      expect(builder.queryEditorState$.value.languageType).toBe(SupportLanguageType.promQL);
     });
 
-    it('handles language switch errors', async () => {
+    it('updates when the query language changes, without preloading another dataset', async () => {
       await builder.init();
+      const dataset = builder.queryState$.value.dataset;
+      (getPreloadedQueryState as jest.Mock).mockClear();
 
-      const error = new Error('Failed to load dataset');
-      (getPreloadedQueryState as jest.Mock).mockRejectedValue(new Error('Failed to load dataset'));
+      builder.updateQueryState({ language: 'SQL', query: '' });
+
+      expect(builder.queryEditorState$.value.languageType).toBe(SupportLanguageType.sql);
+      expect(builder.queryState$.value.dataset).toEqual(dataset);
+      expect(getPreloadedQueryState).not.toHaveBeenCalled();
+    });
+
+    it('no longer switches the dataset when only languageType is set', async () => {
+      await builder.init();
+      (getPreloadedQueryState as jest.Mock).mockClear();
 
       builder.updateQueryEditorState({ languageType: SupportLanguageType.promQL });
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(getPreloadedQueryState).not.toHaveBeenCalled();
+    });
+  });
 
-      expect(builder.datasetView$.value.error).toBe('Failed to load dataset');
-      expect(services.notifications.toasts.addError).toHaveBeenCalledWith(error, {
-        title: 'Error switching language',
+  describe('multi-query row isolation', () => {
+    let row: QueryBuilder;
+
+    beforeEach(() => {
+      services.osdUrlStateStorage = { get: jest.fn(), set: jest.fn() } as any;
+      (getPreloadedQueryState as jest.Mock).mockResolvedValue({
+        query: '',
+        language: 'PPL',
+        dataset: undefined,
       });
+      row = new QueryBuilder(() => services, 'B');
+    });
+
+    afterEach(() => {
+      row.dispose();
+    });
+
+    it('does not write URL, global query string or timefilter', async () => {
+      jest.useFakeTimers();
+      await row.init();
+      row.updateQueryState({ query: 'source = edited' });
+      jest.advanceTimersByTime(1000);
+      jest.useRealTimers();
+
+      expect(services.osdUrlStateStorage.set).not.toHaveBeenCalled();
+      expect(services.data.query.queryString.setQuery).not.toHaveBeenCalled();
+      expect(services.data.query.timefilter.timefilter.setTime).not.toHaveBeenCalled();
+    });
+
+    it('executes with its own abort map (no shared/global map)', async () => {
+      row.setIsInitialized(true);
+      row.datasetView$.next({ dataView: { id: 'logs' } as any, isLoading: false, error: null });
+      (prepareQueryForLanguage as jest.Mock).mockReturnValue({ query: 'source = logs' });
+
+      (queryExecution as jest.Mock).mockClear();
+      await row.executeQuery();
+      await builder.executeQuery();
+
+      // Keyed by refId so a new run of the same row cancels its previous request.
+      const calls = (queryExecution as jest.Mock).mock.calls.map(([args]) => args);
+      const rowCall = calls.find((args) => args.abortKey === row.refId);
+      const builderCall = calls.find((args) => args.abortKey === builder.refId);
+      expect(rowCall?.activeQueryAbortControllers).toBeInstanceOf(Map);
+      expect(rowCall?.activeQueryAbortControllers).not.toBe(
+        builderCall?.activeQueryAbortControllers
+      );
+    });
+  });
+
+  describe('abortActiveQueries', () => {
+    it("aborts only this builder's queries", async () => {
+      const other = new QueryBuilder(() => services, 'Z');
+      const controllers = new Map<QueryBuilder, AbortController>();
+      (queryExecution as jest.Mock).mockImplementation(
+        ({ queryString, activeQueryAbortControllers }) => {
+          const controller = new AbortController();
+          activeQueryAbortControllers.set(queryString, controller);
+          return controller;
+        }
+      );
+      (prepareQueryForLanguage as jest.Mock).mockReturnValue({ query: 'q' });
+      [builder, other].forEach((b) => {
+        b.setIsInitialized(true);
+        b.datasetView$.next({ dataView: { id: 'logs' } as any, isLoading: false, error: null });
+      });
+      await builder.executeQuery();
+      controllers.set(builder, (queryExecution as jest.Mock).mock.results.slice(-1)[0].value);
+      await other.executeQuery();
+      controllers.set(other, (queryExecution as jest.Mock).mock.results.slice(-1)[0].value);
+
+      other.abortActiveQueries();
+
+      expect(controllers.get(other)?.signal.aborted).toBe(true);
+      expect(controllers.get(builder)?.signal.aborted).toBe(false);
+      (queryExecution as jest.Mock).mockReset();
+      other.dispose();
     });
   });
 });
