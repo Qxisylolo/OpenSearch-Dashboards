@@ -226,7 +226,9 @@ describe('VisualizationEditorPage', () => {
     expect(mockContainer.executeAll).not.toHaveBeenCalled();
   });
 
-  it('resets queryBuilder and visualizationBuilder on unmount', async () => {
+  // it('resets queryBuilder and visualizationBuilder on unmount', async () => {
+  // The page no longer resets the query builder: MultiQueryBuilderProvider disposes it.
+  it('resets the visualizationBuilder, not the query builder, on unmount', async () => {
     (useInitialSaveExplore as jest.Mock).mockReturnValue({
       savedExplore: { id: '1', title: 'My Explore' },
       isLoading: false,
@@ -240,7 +242,8 @@ describe('VisualizationEditorPage', () => {
 
     unmount();
 
-    expect(mockContainer.reset).toHaveBeenCalled();
+    // expect(mockContainer.reset).toHaveBeenCalled();
+    expect(mockContainer.reset).not.toHaveBeenCalled();
     expect(mockVisualizationBuilder.reset).toHaveBeenCalled();
   });
 });

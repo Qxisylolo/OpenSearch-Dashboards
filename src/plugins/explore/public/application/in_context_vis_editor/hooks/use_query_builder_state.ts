@@ -5,10 +5,10 @@
 
 import { useMemo } from 'react';
 import { useObservable } from 'react-use';
-import { getMultiQueryBuilder } from '../multi_query_builder/multi_query_builder';
+import { useMultiQueryBuilder } from '../multi_query_builder/multi_query_builder_context';
 
 export const useMultiQueryBuilderState = () => {
-  const container = getMultiQueryBuilder();
+  const container = useMultiQueryBuilder();
 
   const selectedRow$ = useMemo(() => container.getSelectedRow$(), [container]);
   const selectedRow = useObservable(selectedRow$, container.getSelectedRow());

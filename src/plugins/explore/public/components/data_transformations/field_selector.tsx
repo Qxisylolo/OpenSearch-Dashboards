@@ -79,8 +79,27 @@ export const FieldSelector = ({
 
   const hasSelection = supportMulti ? (configFields?.length ?? 0) > 0 : !!configField;
 
+  // Selected fields that are no longer in the current data. Only judged once fields are known
+  // (availableFields is empty before the first result arrives).
+  const availableNames = new Set(availableFields.map((field) => field.name));
+  const missingFields =
+    availableFields.length > 0 ? [...selectedSet].filter((name) => !availableNames.has(name)) : [];
+  const isInvalid = missingFields.length > 0;
+  const missingFieldsMessage = isInvalid
+    ? i18n.translate('explore.transformations.fieldSelector.missingFields', {
+        defaultMessage: '{count, plural, one {Missing field} other {Missing fields}}: {fields}',
+        values: { count: missingFields.length, fields: missingFields.join(', ') },
+      })
+    : undefined;
+
   return (
-    <EuiFormRow label={showLabel ? defaultLabel : ''} display="columnCompressed">
+    // <EuiFormRow label={showLabel ? defaultLabel : ''} display="columnCompressed">
+    <EuiFormRow
+      label={showLabel ? defaultLabel : ''}
+      display="columnCompressed"
+      isInvalid={isInvalid}
+      error={missingFieldsMessage}
+    >
       <EuiPopover
         button={
           <EuiFlexGroup gutterSize="none" alignItems="center">
@@ -91,6 +110,7 @@ export const FieldSelector = ({
                 iconType="arrowDown"
                 iconSide="right"
                 flush="left"
+                color={isInvalid ? 'danger' : 'primary'}
                 data-test-subj={`${testSubjPrefix}SelectButton`}
               >
                 {buttonLabel}

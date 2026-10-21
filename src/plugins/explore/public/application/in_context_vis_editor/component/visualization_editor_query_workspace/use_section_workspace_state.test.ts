@@ -133,4 +133,40 @@ describe('useSectionWorkspaceState', () => {
       iconType: 'sortable',
     });
   });
+
+  describe('isValid', () => {
+    const step = (status: string, codes: string[] = []) =>
+      ({
+        instanceId: 'x',
+        definitionId: 'sort_by',
+        status,
+        issues: codes.map((code) => ({ code, message: code })),
+      }) as any;
+
+    it('passes query row validity through', () => {
+      const { result } = setup({ queryRows: [{ refId: 'A', isValid: false }] });
+      expect(result.current.sections[0].items[0].isValid).toBe(false);
+    });
+
+    it('flags failed and missing-field steps, but not unconfigured ones', () => {
+      const { result } = setup({
+        transformPipeline: [makeInstance('t1'), makeInstance('t2'), makeInstance('t3')],
+        transformStepResults: new Map([
+          ['t1', step('failed', ['execution_error'])],
+          ['t2', step('skipped', ['missing_fields'])],
+          ['t3', step('skipped', ['invalid_config'])],
+        ]),
+      });
+      expect(result.current.sections[1].items.map((item) => item.isValid)).toEqual([
+        false,
+        false,
+        true,
+      ]);
+    });
+
+    it('treats steps without a result as valid', () => {
+      const { result } = setup();
+      expect(result.current.sections[1].items.every((item) => item.isValid)).toBe(true);
+    });
+  });
 });

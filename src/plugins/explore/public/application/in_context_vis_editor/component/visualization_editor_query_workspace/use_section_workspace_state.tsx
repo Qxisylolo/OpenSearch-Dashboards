@@ -9,7 +9,14 @@ import { Section } from './utils';
 import {
   TransformationInstance,
   TransformationService,
+  TransformationStepResult,
 } from '../../../../components/data_transformations';
+
+// A step is flagged when it threw, or referenced fields that aren't in its input. An unconfigured
+// step (invalid_config, e.g. just added) is not flagged.
+const isStepValid = (step?: TransformationStepResult) =>
+  !step ||
+  (step.status !== 'failed' && !step.issues.some((issue) => issue.code === 'missing_fields'));
 
 /**
  * Plain, already-reactive data for one query row. The hook never reads a query
@@ -38,6 +45,8 @@ export interface UseSectionWorkspaceStateParams {
   queryHandlers?: QueryRowHandlers;
   transformPipeline: TransformationInstance[];
   transformationService: TransformationService;
+  /** Last pipeline run's per-instance results (TransformationService.stepResults$). */
+  transformStepResults?: Map<string, TransformationStepResult>;
   /** Notified when a query row is selected (e.g. to sync a multi builder's selectRow). */
   onSelectQuery?: (refId: string) => void;
 }
@@ -57,6 +66,7 @@ export const useSectionWorkspaceState = ({
   queryHandlers = {},
   transformPipeline,
   transformationService,
+  transformStepResults,
   onSelectQuery,
 }: UseSectionWorkspaceStateParams): UseSectionWorkspaceStateResult => {
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
@@ -95,6 +105,7 @@ export const useSectionWorkspaceState = ({
           label: definition?.label ?? instance.definition_id,
           iconType: definition?.iconType ?? 'filter',
           isHidden: instance.hide,
+          isValid: isStepValid(transformStepResults?.get(instance.instance_id)),
         };
       }),
       draggable: true,
@@ -106,7 +117,7 @@ export const useSectionWorkspaceState = ({
         transformationService.setPipeline(next);
       },
     }),
-    [transformPipeline, transformationService]
+    [transformPipeline, transformationService, transformStepResults]
   );
 
   const sections = useMemo(

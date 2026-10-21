@@ -14,6 +14,7 @@ export type {
   ConfigFieldSpec,
   ConfigFieldKind,
   ConfigEnumOption,
+  TransformationStepResult,
 } from './types';
 
 export {

@@ -14,7 +14,7 @@ export type UrlRowEditorState = Partial<Pick<QueryEditorState, 'isHidden'>>;
 
 // `_e`: container-level editor state plus each row's editor state.
 export interface UrlMultiEditorState {
-  selectedRow?: string;
+  selectedRowRefId?: string;
   maxDataPoints?: number;
   rows: Array<UrlRowEntry<UrlRowEditorState>>;
 }
@@ -49,13 +49,13 @@ export const normalizeUrlEditorState = (raw: unknown): UrlMultiEditorState => {
   const state = raw as Partial<UrlMultiEditorState> & Partial<QueryEditorState>;
   if (Array.isArray(state.rows)) {
     return {
-      selectedRow: state.selectedRow,
+      selectedRowRefId: state.selectedRowRefId,
       maxDataPoints: state.maxDataPoints,
       rows: state.rows.filter(isRowEntry) as Array<UrlRowEntry<UrlRowEditorState>>,
     };
   }
   return {
-    selectedRow: SINGLE_QUERY_REF_ID,
+    selectedRowRefId: SINGLE_QUERY_REF_ID,
     rows: [
       // [
       //   SINGLE_QUERY_REF_ID,

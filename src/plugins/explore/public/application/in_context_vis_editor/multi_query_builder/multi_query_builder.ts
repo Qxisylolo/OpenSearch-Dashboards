@@ -33,7 +33,6 @@ import {
 } from '../../../application/utils/state_management/types';
 import { IVariableInterpolationService } from '../../../../../dashboard/public';
 import { PromQLQueryOptions } from '../../../../../query_enhancements/common';
-import { getServices as getExploreServices } from '../../../services/services';
 import { getSourceTypeRegistry } from '../../../services/source_type_registry';
 
 export interface PerQueryResult {
@@ -81,29 +80,43 @@ export class MultiQueryBuilder {
   private getServices: () => ExploreServices;
   private refIdCounter = 0;
   private subscriptions = Array<Subscription>();
-  private isInitialized = false;
+  // private isInitialized = false;
+  // One instance per editor session (MultiQueryBuilderProvider): init runs once, dispose ends it.
+  private initPromise?: Promise<void>;
+  private disposed = false;
 
   // Pending row promises after init(), so MultiQueryBuilder.init() can wait for rows to be finished before callers inspect or execute them.
   private rowPromises = new WeakMap<QueryBuilder, Promise<void>>();
-  // Bumped by reset(), so an init() still awaiting from the previous lifecycle can tell it's stale.
-  private lifecycleId = 0;
+  // // Bumped by reset(), so an init() still awaiting from the previous lifecycle can tell it's stale.
+  // private lifecycleId = 0;
 
   constructor(getServices: () => ExploreServices) {
     this.getServices = getServices;
   }
 
-  async init(options?: { savedQueries?: QueryState[] }): Promise<void> {
-    // TODO later(subsribe url) Effects can re-run init; subscriptions must only be set up once per lifecycle.
-    // TODO URL sync is one-way (state -> URL). An external URL change (back/forward POP, or a PUSH
-    // into the app with a different `_mq` / `_eq`) is not picked up because the app stays mounted.
-    // Rather than every builder listening to the URL, remount the editor on such a change (bump the
-    // page's key from scopedHistory.listen) so reset() + the first-load init re-read it. Our own
-    // writes use `replace: true`, so REPLACE can be ignored. `isInitialized` can only go once the
-    // page's init effect runs exactly once.
-    if (this.isInitialized) {
-      return;
+  // TODO URL sync is one-way (state -> URL). An external URL change (back/forward POP, or a PUSH
+  // into the app with a different `_eq`) is not picked up because the app stays mounted. Rather
+  // than every builder listening to the URL, remount the editor on such a change (bump the
+  // MultiQueryBuilderProvider's key from scopedHistory.listen), so a new instance reads the URL.
+  // Our own writes use `replace: true`, so REPLACE can be ignored.
+
+  // Single-flight: the page's init effect can re-run (its deps change), and concurrent calls must
+  // not build the rows or the syncs twice. Later calls get the first call's promise.
+  init(options?: { savedQueries?: QueryState[] }): Promise<void> {
+    if (this.disposed) {
+      return Promise.resolve();
     }
-    const lifecycleId = this.lifecycleId;
+    if (!this.initPromise) {
+      this.initPromise = this.runInit(options);
+    }
+    return this.initPromise;
+  }
+
+  private async runInit(options?: { savedQueries?: QueryState[] }): Promise<void> {
+    // if (this.isInitialized) {
+    //   return;
+    // }
+    // const lifecycleId = this.lifecycleId;
 
     const { queries: queriesFromUrl, editorState: editorStateFromUrl } = this.readUrlState();
 
@@ -128,13 +141,17 @@ export class MultiQueryBuilder {
 
     // Wait for all rows finish initialization by waitForDatasetReady
     await this.waitForAllRowsInitialized();
-    // reset() ran while we were waiting (e.g. the page unmounted): don't attach the URL sync to
-    // the next lifecycle.
-    if (lifecycleId !== this.lifecycleId) {
+    // // reset() ran while we were waiting (e.g. the page unmounted): don't attach the URL sync to
+    // // the next lifecycle.
+    // if (lifecycleId !== this.lifecycleId) {
+    //   return;
+    // }
+    // Disposed while we were waiting (e.g. the page unmounted): don't start the URL sync.
+    if (this.disposed) {
       return;
     }
     this.startUrlSync();
-    this.setIsInitialized(true);
+    // this.setIsInitialized(true);
   }
 
   /* --- Subscription ---
@@ -574,7 +591,13 @@ export class MultiQueryBuilder {
     await Promise.allSettled(this.getAllRows().map((row) => this.rowPromises.get(row)));
   }
 
+  // Ends the session; safe to call twice. The instance is not reusable afterwards.
   dispose(): void {
+    console.log('disposed');
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
     // Container-level syncs (timefilter, URL, selected-row query) must stop with the container.
     this.subscriptions.forEach((sub) => sub.unsubscribe());
     this.subscriptions = [];
@@ -585,23 +608,25 @@ export class MultiQueryBuilder {
     this.variableNames$.complete();
   }
 
-  setIsInitialized(isInitialized: boolean) {
-    this.isInitialized = isInitialized;
-  }
-
-  reset(): void {
-    this.dispose();
-    this.queryRows$ = new BehaviorSubject<QueryRows>([]);
-    this.multiQueryEditorState$ = new BehaviorSubject<MultiQueryEditorState>(
-      initialMultiQueryEditorState
-    );
-    this.multiQueryResults$ = new BehaviorSubject<MultiQueryResult>({});
-    this.variableNames$ = new BehaviorSubject<string[]>([]);
-    this.refIdCounter = 0;
-    this.setIsInitialized(false);
-    this.interpolationService = undefined;
-    this.lifecycleId += 1;
-  }
+  // Replaced by one instance per session (MultiQueryBuilderProvider creates and disposes it), so
+  // there's no reset, lifecycleId or isInitialized to keep in step.
+  // setIsInitialized(isInitialized: boolean) {
+  //   this.isInitialized = isInitialized;
+  // }
+  //
+  // reset(): void {
+  //   this.dispose();
+  //   this.queryRows$ = new BehaviorSubject<QueryRows>([]);
+  //   this.multiQueryEditorState$ = new BehaviorSubject<MultiQueryEditorState>(
+  //     initialMultiQueryEditorState
+  //   );
+  //   this.multiQueryResults$ = new BehaviorSubject<MultiQueryResult>({});
+  //   this.variableNames$ = new BehaviorSubject<string[]>([]);
+  //   this.refIdCounter = 0;
+  //   this.setIsInitialized(false);
+  //   this.interpolationService = undefined;
+  //   this.lifecycleId += 1;
+  // }
 }
 
 // // Singleton instance

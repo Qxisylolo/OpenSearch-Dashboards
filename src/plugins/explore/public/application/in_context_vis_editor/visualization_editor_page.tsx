@@ -151,12 +151,18 @@ export const VisualizationEditorPage = ({
     };
   }, [osdUrlStateStorage, data.query]);
 
+  // useEffect(() => {
+  //   return () => {
+  //     container.reset();
+  //     visualizationBuilderForEditor.reset();
+  //   };
+  // }, [container, visualizationBuilderForEditor]);
+  // The query builder is disposed by MultiQueryBuilderProvider when the session ends.
   useEffect(() => {
     return () => {
-      container.reset();
       visualizationBuilderForEditor.reset();
     };
-  }, [container, visualizationBuilderForEditor]);
+  }, [visualizationBuilderForEditor]);
 
   // Update variable names in queryBuilder when variables change
   useEffect(() => {
