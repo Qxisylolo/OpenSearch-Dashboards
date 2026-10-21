@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { BehaviorSubject } from 'rxjs';
 import { LanguageToggle } from './lauguage_toggle';
 import { EditorMode } from '../../utils/state_management/types';
 import { useQueryBuilderState } from '../hooks/use_query_builder_state';
@@ -57,6 +58,12 @@ const buildQueryBuilderState = (options: Record<string, any> = {}) => ({
   queryBuilder: {
     updateQueryEditorState: mockUpdateQueryEditorState,
     updateQueryState: mockUpdateQueryState,
+    // The click handler reads the row's dataset at execution time.
+    queryState$: new BehaviorSubject({
+      query: '',
+      language: options.languageType ?? 'PPL',
+      dataset: { id: 'ds', type: 'INDEX_PATTERN' },
+    }),
   },
 });
 

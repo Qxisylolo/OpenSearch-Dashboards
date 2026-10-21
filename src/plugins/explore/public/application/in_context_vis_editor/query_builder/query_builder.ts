@@ -193,7 +193,8 @@ export class QueryBuilder {
     this.setIsInitialized(true);
   }
 
-  private async handleDatasetChange(dataset?: Dataset): Promise<DataView | undefined> {
+  private async handleDatasetChange(query: Query): Promise<DataView | undefined> {
+    const dataset = query.dataset;
     if (!dataset) {
       this.updateQueryEditorState({
         promptModeIsAvailable: false,
@@ -202,7 +203,7 @@ export class QueryBuilder {
     }
 
     const dataView = await this.fetchDataView(dataset);
-    await this.checkAgentAvailability(dataset?.dataSource?.id);
+    await this.checkAgentAvailability(query);
     return dataView;
   }
 
@@ -227,7 +228,7 @@ export class QueryBuilder {
           // check isLanguageChanged and isInitialized for the initial sync
           if (isDatasetChanged || isLanguageChanged || !this.isInitialized) {
             this.datasetView$.next({ ...this.datasetView$.getValue(), isLoading: true });
-            return from(this.handleDatasetChange(newQuery.dataset));
+            return from(this.handleDatasetChange(newQuery));
           }
 
           return of(null); // no change
@@ -257,8 +258,8 @@ export class QueryBuilder {
     this.subscriptions.push(querySyncSub);
   }
 
-  private async checkAgentAvailability(_datasourceId?: string) {
-    const result = await getPromptModeIsAvailable(this.getServices());
+  private async checkAgentAvailability(query: Query) {
+    const result = await getPromptModeIsAvailable(this.getServices(), query);
     this.updateQueryEditorState({ promptModeIsAvailable: result });
   }
 

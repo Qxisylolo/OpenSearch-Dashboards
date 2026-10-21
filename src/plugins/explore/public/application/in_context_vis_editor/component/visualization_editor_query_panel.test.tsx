@@ -7,7 +7,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { BehaviorSubject } from 'rxjs';
 import { QueryPanel } from './visualization_editor_query_panel';
-import { QueryEditorState, SupportLanguageType } from '../query_builder/query_builder';
+import { QueryEditorState, QueryState } from '../query_builder/query_builder';
 import { EditorMode, QueryExecutionStatus } from '../../utils/state_management/types';
 import {
   SourceTypeDefinition,
@@ -54,9 +54,14 @@ const renderPanel = (
   datasetType: string,
   editorMode: EditorMode = EditorMode.Query
 ) => {
-  (useQueryBuilderState as jest.Mock).mockReturnValue({
-    queryState: { query: '', language, dataset: { id: 'ds', title: 'ds', type: datasetType } },
-  });
+  const queryState: QueryState = {
+    query: '',
+    language,
+    dataset: { id: 'ds', title: 'ds', type: datasetType },
+  };
+  (useQueryBuilderState as jest.Mock).mockReturnValue({ queryState });
+  // The panel reads the row's language and dataset from its own queryState$.
+  const queryState$ = new BehaviorSubject<QueryState>(queryState);
   const state$ = new BehaviorSubject<QueryEditorState>({
     queryStatus: { status: QueryExecutionStatus.UNINITIALIZED },
     editorMode,
@@ -64,10 +69,11 @@ const renderPanel = (
     promptToQueryIsLoading: false,
     isQueryEditorDirty: false,
     userInitiatedQuery: false,
-    languageType:
-      language === 'PROMQL' ? SupportLanguageType.promQL : (language as SupportLanguageType),
+    // languageType:
+    //   language === 'PROMQL' ? SupportLanguageType.promQL : (language as SupportLanguageType),
   } as QueryEditorState);
-  return render(<QueryPanel queryEditorState$={state$} />);
+  // return render(<QueryPanel queryEditorState$={state$} />);
+  return render(<QueryPanel queryState$={queryState$} queryEditorState$={state$} />);
 };
 
 describe('visualization editor QueryPanel', () => {
