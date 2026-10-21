@@ -13,9 +13,8 @@ import { EXPLORE_DEFAULT_LANGUAGE } from '../../../../common';
 import { useQueryBuilderState } from '../hooks/use_query_builder_state';
 import { useEditorOperations } from '../hooks/use_editor_operations';
 
-import { resolveDatasetLanguage } from '../query_builder/utils';
+import { resolveDatasetLanguage, getInitialQueryString } from '../query_builder/utils';
 import '../visualization_editor.scss';
-import { SupportLanguageType } from '../query_builder/query_builder';
 
 const PROMETHEUS_DATASET_TYPE = 'PROMETHEUS';
 
@@ -42,6 +41,7 @@ export const DatasetSelectWidget = () => {
             query: EMPTY_QUERY.QUERY,
             language: EXPLORE_DEFAULT_LANGUAGE,
             dataset: undefined,
+            queryOptions: undefined,
           });
 
           queryBuilder.updateQueryEditorState({ isQueryEditorDirty: true });
@@ -49,12 +49,9 @@ export const DatasetSelectWidget = () => {
           clearEditor();
           return;
         }
-        // TODO try to reuse previous language selection first, otherwise use resolved language type by dataset
-        // const currentLanguage = queryBuilder.queryState$.getValue().language;
-        const language = resolveDatasetLanguage(services, dataset);
-        const initialQuery = queryString.getInitialQueryByDataset({ ...dataset, language });
-        // SQL require base query (SELECT * FROM ...), others start empty.
-        const query = language === SupportLanguageType.sql ? initialQuery.query : EMPTY_QUERY.QUERY;
+
+        const language = resolveDatasetLanguage(services, dataset) ?? EXPLORE_DEFAULT_LANGUAGE;
+        const query = getInitialQueryString(queryString, dataset, language);
         queryBuilder.updateQueryState({
           language,
           dataset,
@@ -114,6 +111,7 @@ export const DatasetSelectWidget = () => {
         signalType={signalTypes}
         showNonTimeFieldDatasets={false}
         controlledSelectedDataset={queryState.dataset}
+        isControlled={true}
       />
     </div>
   );

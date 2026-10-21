@@ -44,8 +44,10 @@ const buildQueryBuilderState = (options: Record<string, any> = {}) => ({
     queryStatus: { status: QueryExecutionStatus.UNINITIALIZED },
     editorMode: EditorMode.Query,
     userInitiatedQuery: false,
-    languageType: SupportLanguageType.ppl,
+    // languageType: SupportLanguageType.ppl,
   },
+  // The run handler reads the row's language from queryState.
+  queryState: { query: 'source=logs', language: SupportLanguageType.ppl, dataset: undefined },
   datasetView: { dataView: undefined },
   queryBuilder: {
     updateQueryEditorState: jest.fn(),

@@ -149,7 +149,7 @@ describe('QueryBuilder', () => {
       });
       expect(services.osdUrlStateStorage.get).not.toHaveBeenCalled();
       expect(builder.queryState$.value.query).toBe('source = logs');
-      expect(builder.queryEditorState$.value.languageType).toBe('PPL');
+      expect(builder.queryState$.value.language).toBe('PPL');
     });
 
     it('sets up subscriptions', async () => {
@@ -424,7 +424,7 @@ describe('QueryBuilder', () => {
 
   describe('handleDatasetChange', () => {
     it('returns undefined and disables agents when no dataset', async () => {
-      const result = await (builder as any).handleDatasetChange(undefined);
+      const result = await (builder as any).handleDatasetChange({ query: '', language: 'PPL' });
       expect(result).toBeUndefined();
       expect(builder.queryEditorState$.value.promptModeIsAvailable).toBe(false);
     });
@@ -440,9 +440,12 @@ describe('QueryBuilder', () => {
         type: 'INDEX_PATTERN',
         dataSource: { id: 'ds-123' },
       } as any;
-      await (builder as any).handleDatasetChange(dataset);
 
-      expect(checkAgentSpy).toHaveBeenCalledWith('ds-123');
+      const query = { query: '', language: 'PPL', dataset };
+      await (builder as any).handleDatasetChange(query);
+
+      // The row's own query, not the global one, decides AI availability.
+      expect(checkAgentSpy).toHaveBeenCalledWith(query);
     });
   });
 
@@ -610,7 +613,8 @@ describe('QueryBuilder', () => {
   //   });
   // });
 
-  describe('languageType follows the query language', () => {
+  // languageType was removed from QueryEditorState: the language lives on the query state only.
+  describe('language lives on the query state', () => {
     it("is set from the preloaded query's language on init", async () => {
       (getPreloadedQueryState as jest.Mock).mockResolvedValue({
         query: '',
@@ -619,7 +623,7 @@ describe('QueryBuilder', () => {
       });
       await builder.init({ savedQueryState: { query: 'up', language: 'PROMQL' } });
 
-      expect(builder.queryEditorState$.value.languageType).toBe(SupportLanguageType.promQL);
+      expect(builder.queryState$.value.language).toBe(SupportLanguageType.promQL);
     });
 
     it('updates when the query language changes, without preloading another dataset', async () => {
@@ -629,18 +633,8 @@ describe('QueryBuilder', () => {
 
       builder.updateQueryState({ language: 'SQL', query: '' });
 
-      expect(builder.queryEditorState$.value.languageType).toBe(SupportLanguageType.sql);
+      expect(builder.queryState$.value.language).toBe(SupportLanguageType.sql);
       expect(builder.queryState$.value.dataset).toEqual(dataset);
-      expect(getPreloadedQueryState).not.toHaveBeenCalled();
-    });
-
-    it('no longer switches the dataset when only languageType is set', async () => {
-      await builder.init();
-      (getPreloadedQueryState as jest.Mock).mockClear();
-
-      builder.updateQueryEditorState({ languageType: SupportLanguageType.promQL });
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
       expect(getPreloadedQueryState).not.toHaveBeenCalled();
     });
   });
