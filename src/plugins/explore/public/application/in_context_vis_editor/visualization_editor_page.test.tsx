@@ -51,6 +51,14 @@ const mockQueryBuilder = {
   executeQuery: jest.fn(),
   reset: jest.fn(),
   queryState$: { getValue: jest.fn().mockReturnValue({ query: '' }) },
+};
+
+// The page lifecycle (init / execute on load / reset / variable names) goes through the container.
+const mockContainer = {
+  init: jest.fn().mockResolvedValue(undefined),
+  executeAll: jest.fn(),
+  reset: jest.fn(),
+  getAllRows: jest.fn(() => [mockQueryBuilder]),
   setVariableNames: jest.fn(),
 };
 
@@ -78,7 +86,11 @@ beforeEach(() => {
   jest.clearAllMocks();
 
   (useOpenSearchDashboards as jest.Mock).mockReturnValue({ services: mockServices });
-  (useQueryBuilderState as jest.Mock).mockReturnValue({ queryBuilder: mockQueryBuilder });
+  // (useQueryBuilderState as jest.Mock).mockReturnValue({ queryBuilder: mockQueryBuilder });
+  (useQueryBuilderState as jest.Mock).mockReturnValue({
+    queryBuilder: mockQueryBuilder,
+    container: mockContainer,
+  });
   (useVisualizationBuilder as jest.Mock).mockReturnValue({
     visualizationBuilderForEditor: mockVisualizationBuilder,
   });
@@ -192,7 +204,7 @@ describe('VisualizationEditorPage', () => {
     renderPage();
 
     await waitFor(() => {
-      expect(mockQueryBuilder.executeQuery).toHaveBeenCalled();
+      expect(mockContainer.executeAll).toHaveBeenCalled();
     });
   });
 
@@ -209,9 +221,9 @@ describe('VisualizationEditorPage', () => {
     renderPage();
 
     await waitFor(() => {
-      expect(mockQueryBuilder.init).toHaveBeenCalled();
+      expect(mockContainer.init).toHaveBeenCalled();
     });
-    expect(mockQueryBuilder.executeQuery).not.toHaveBeenCalled();
+    expect(mockContainer.executeAll).not.toHaveBeenCalled();
   });
 
   it('resets queryBuilder and visualizationBuilder on unmount', async () => {
@@ -224,11 +236,11 @@ describe('VisualizationEditorPage', () => {
     });
 
     const { unmount } = renderPage();
-    await waitFor(() => expect(mockQueryBuilder.init).toHaveBeenCalled());
+    await waitFor(() => expect(mockContainer.init).toHaveBeenCalled());
 
     unmount();
 
-    expect(mockQueryBuilder.reset).toHaveBeenCalled();
+    expect(mockContainer.reset).toHaveBeenCalled();
     expect(mockVisualizationBuilder.reset).toHaveBeenCalled();
   });
 });

@@ -10,10 +10,19 @@ export interface SectionPanelProps {
   title?: string;
   subtitle?: string;
   iconType?: string;
+  actions?: ReactNode;
+  headerContent?: ReactNode;
   children: ReactNode;
 }
 
-export const SectionPanel = ({ title, subtitle, iconType, children }: SectionPanelProps) => {
+export const SectionPanel = ({
+  title,
+  subtitle,
+  iconType,
+  actions,
+  headerContent,
+  children,
+}: SectionPanelProps) => {
   return (
     <EuiPanel
       paddingSize="none"
@@ -23,30 +32,46 @@ export const SectionPanel = ({ title, subtitle, iconType, children }: SectionPan
       className="queryWorkspaceDetail"
       data-test-subj="sectionPanel"
     >
-      {title && (
+      {(title || headerContent) && (
         <div className="queryWorkspaceDetail__header">
           <EuiFlexGroup alignItems="center" gutterSize="s" responsive={false}>
             {iconType && (
               <EuiFlexItem grow={false}>
-                <EuiIcon type={iconType} />
+                <EuiIcon color="subdued" type={iconType} size="s" />
               </EuiFlexItem>
             )}
-            <EuiFlexItem grow={false}>
-              <EuiText size="s">
-                <strong>{title}</strong>
-              </EuiText>
-            </EuiFlexItem>
+            {headerContent ? (
+              <EuiFlexItem grow={false} className="queryWorkspaceDetail__headerContent">
+                {headerContent}
+              </EuiFlexItem>
+            ) : (
+              <EuiFlexItem grow={false}>
+                <EuiText size="s">
+                  <strong>{title}</strong>
+                </EuiText>
+              </EuiFlexItem>
+            )}
             {subtitle && (
               <>
                 <EuiFlexItem grow={false}>
                   <div className="queryWorkspaceDetail__divider" />
                 </EuiFlexItem>
-                <EuiFlexItem>
+                <EuiFlexItem grow={false}>
                   <EuiText size="s" color="subdued">
                     {subtitle}
                   </EuiText>
                 </EuiFlexItem>
               </>
+            )}
+            {actions && <EuiFlexItem />}
+            {actions && (
+              <EuiFlexItem
+                grow={false}
+                className="queryWorkspaceDetail__actions"
+                data-test-subj="sectionPanelActions"
+              >
+                {actions}
+              </EuiFlexItem>
             )}
           </EuiFlexGroup>
         </div>

@@ -93,6 +93,7 @@ describe('useVariables', () => {
         language: 'PPL',
       }),
       lastExecutedInterpolatedQuery: null,
+      getQueryEditorState: jest.fn(() => ({ isHidden: false })),
     };
 
     mockServices = {
@@ -112,7 +113,15 @@ describe('useVariables', () => {
     };
 
     (useOpenSearchDashboards as jest.Mock).mockReturnValue({ services: mockServices });
-    (useQueryBuilderState as jest.Mock).mockReturnValue({ queryBuilder: mockQueryBuilder });
+    // (useQueryBuilderState as jest.Mock).mockReturnValue({ queryBuilder: mockQueryBuilder });
+    // Variables are wired through the container, which fans out to its rows.
+    (useQueryBuilderState as jest.Mock).mockReturnValue({
+      queryBuilder: mockQueryBuilder,
+      container: {
+        getAllRows: () => [mockQueryBuilder],
+        setInterpolationService: (svc: unknown) => mockQueryBuilder.setInterpolationService(svc),
+      },
+    });
     (VariableService as unknown as jest.Mock).mockImplementation(() => mockVariableService);
     (VariableInterpolationService as unknown as jest.Mock).mockImplementation(
       () => mockInterpolationService

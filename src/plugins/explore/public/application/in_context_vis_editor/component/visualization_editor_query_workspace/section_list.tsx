@@ -108,7 +108,6 @@ export const SectionList = ({ section, activeItemId, onSelectItem }: SectionList
               </EuiDroppable>
             </EuiDragDropContext>
           ) : (
-            // items.map((item) => <React.Fragment key={item.id}>{renderRow(item)}</React.Fragment>)
             items.map((item) => (
               <SectionListItem
                 key={item.id}

@@ -4,23 +4,25 @@
  */
 
 import { useCallback, useMemo, useRef } from 'react';
+import { uniq } from 'lodash';
 import { useOpenSearchDashboards } from '../../../../../opensearch_dashboards_react/public';
-import { Dataset, DEFAULT_DATA, EMPTY_QUERY } from '../../../../../data/common';
+import { CORE_SIGNAL_TYPES, Dataset, DEFAULT_DATA, EMPTY_QUERY } from '../../../../../data/common';
 import { ExploreServices } from '../../../types';
 import { EXPLORE_DEFAULT_LANGUAGE } from '../../../../common';
 
 import { useQueryBuilderState } from '../hooks/use_query_builder_state';
 import { useEditorOperations } from '../hooks/use_editor_operations';
-import { SupportLanguageType } from '../query_builder/query_builder';
-import { getRequiredSignalType } from '../query_builder/utils';
+
+import { resolveDatasetLanguage } from '../query_builder/utils';
 import '../visualization_editor.scss';
+import { SupportLanguageType } from '../query_builder/query_builder';
+
+const PROMETHEUS_DATASET_TYPE = 'PROMETHEUS';
 
 export const DatasetSelectWidget = () => {
   const { services } = useOpenSearchDashboards<ExploreServices>();
-
-  const { queryEditorState, queryBuilder } = useQueryBuilderState();
-
-  const { clearEditor } = useEditorOperations();
+  const { queryBuilder, queryState } = useQueryBuilderState();
+  const { clearEditor, setEditorText, resetEditorMode } = useEditorOperations();
 
   const {
     data: {
@@ -47,39 +49,60 @@ export const DatasetSelectWidget = () => {
           clearEditor();
           return;
         }
-
-        const initialQuery = queryString.getInitialQueryByDataset(dataset);
+        // TODO try to reuse previous language selection first, otherwise use resolved language type by dataset
+        // const currentLanguage = queryBuilder.queryState$.getValue().language;
+        const language = resolveDatasetLanguage(services, dataset);
+        const initialQuery = queryString.getInitialQueryByDataset({ ...dataset, language });
+        // SQL require base query (SELECT * FROM ...), others start empty.
+        const query = language === SupportLanguageType.sql ? initialQuery.query : EMPTY_QUERY.QUERY;
         queryBuilder.updateQueryState({
-          ...initialQuery,
-          query: EMPTY_QUERY.QUERY,
+          language,
           dataset,
+          query,
+          queryOptions: undefined,
         });
+
         queryBuilder.updateQueryEditorState({ isQueryEditorDirty: true });
 
-        clearEditor();
+        setEditorText(query);
+        // reset to query mode
+        resetEditorMode();
       } catch (error) {
         services.notifications?.toasts.addError(error, {
           title: 'Error selecting dataset',
         });
       }
     },
-    [queryString, clearEditor, queryBuilder, services.notifications?.toasts]
+    [queryString, clearEditor, setEditorText, resetEditorMode, queryBuilder, services]
   );
 
   const supportedTypes = useMemo(() => {
-    if (queryEditorState.languageType === SupportLanguageType.promQL) return ['PROMETHEUS'];
-
-    return (
-      services.supportedTypes || [
+    const datasetService = queryString.getDatasetService();
+    const metricsTypes = [
+      // built-in Prometheus type from OpenSearch source
+      ...(datasetService.getType(PROMETHEUS_DATASET_TYPE) ? [PROMETHEUS_DATASET_TYPE] : []),
+      // TODO Plugin metrics sources (registry.getAll(ExploreFlavor.Metrics) minus the built-in
+      // OpenSearch one): their datasets usually run the plugin's own language, which the language
+      // toggle, initial query, editor choice and result shape don't support yet. They may also need
+      // their own `datasetSelector`, and can register after this memo runs.
+      // // plugins installed metric source from Metric page
+      // ...getSourceTypeRegistry()
+      //   .getAll(ExploreFlavor.Metrics)
+      //   .filter((sourceType) => sourceType.id !== OPENSEARCH_SOURCE_TYPE_ID)
+      //   .flatMap((sourceType) => sourceType.datasetTypes),
+    ];
+    return uniq([
+      ...(services.supportedTypes || [
         DEFAULT_DATA.SET_TYPES.INDEX,
         DEFAULT_DATA.SET_TYPES.INDEX_PATTERN,
-      ]
-    );
-  }, [services.supportedTypes, queryEditorState.languageType]);
+      ]),
+      ...metricsTypes,
+    ]);
+  }, [queryString, services.supportedTypes]);
 
   const signalTypes = useMemo(
-    () => getRequiredSignalType(queryEditorState.languageType),
-    [queryEditorState.languageType]
+    () => [CORE_SIGNAL_TYPES.LOGS, CORE_SIGNAL_TYPES.TRACES, CORE_SIGNAL_TYPES.METRICS],
+    []
   );
 
   return (
@@ -90,6 +113,7 @@ export const DatasetSelectWidget = () => {
         supportedTypes={supportedTypes}
         signalType={signalTypes}
         showNonTimeFieldDatasets={false}
+        controlledSelectedDataset={queryState.dataset}
       />
     </div>
   );

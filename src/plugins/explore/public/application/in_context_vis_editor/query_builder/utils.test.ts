@@ -13,6 +13,7 @@ import {
   showMissingPromptWarning,
   showMissingDatasetWarning,
   handleAgentError,
+  resolveDatasetLanguage,
 } from './utils';
 import { SupportLanguageType } from './query_builder';
 import {
@@ -337,6 +338,7 @@ describe('queryExecution', () => {
 
     await queryExecution({
       services,
+      query: {},
       queryString: '| head 10',
       updateEditorStateFn,
       updateResultFn,
@@ -360,6 +362,7 @@ describe('queryExecution', () => {
 
     await queryExecution({
       services,
+      query: {},
       queryString: 'source=logs',
       updateEditorStateFn,
       updateResultFn,
@@ -393,6 +396,7 @@ describe('queryExecution', () => {
 
     await queryExecution({
       services,
+      query: {},
       queryString: 'source=logs',
       updateEditorStateFn,
       updateResultFn,
@@ -421,6 +425,7 @@ describe('queryExecution', () => {
 
     await queryExecution({
       services,
+      query: {},
       queryString: 'source=logs',
       updateEditorStateFn,
       updateResultFn,
@@ -452,6 +457,7 @@ describe('queryExecution', () => {
     await expect(
       queryExecution({
         services,
+        query: {},
         queryString: 'source=logs',
         updateEditorStateFn,
         updateResultFn,
@@ -464,5 +470,120 @@ describe('queryExecution', () => {
         queryStatus: expect.objectContaining({ status: QueryExecutionStatus.ERROR }),
       })
     );
+  });
+});
+
+describe('queryExecution per-row isolation', () => {
+  const updateEditorStateFn = jest.fn();
+  const updateResultFn = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const mockSearchSource = () => ({
+    fetch: jest.fn().mockResolvedValue({ hits: { hits: [{ _id: '1' }] } }),
+    getSearchRequestBody: jest.fn().mockResolvedValue({}),
+    getDataFrame: jest.fn().mockReturnValue({ schema: [] }),
+  });
+
+  it("sends the row's own query (not the global one) and drops non-metrics queryOptions", async () => {
+    const services = buildServices();
+    (createSearchSourceWithQuery as jest.Mock).mockResolvedValue(mockSearchSource());
+    services.data.query.queryString.getLanguageService = jest
+      .fn()
+      .mockReturnValue({ getLanguage: jest.fn().mockReturnValue({}) });
+
+    await queryExecution({
+      services,
+      query: { query: 'source=logs', language: 'PPL', queryOptions: { maxDataPoints: 5 } } as any,
+      queryString: 'source=logs',
+      updateEditorStateFn,
+      updateResultFn,
+      activeQueryAbortControllers: new Map(),
+    });
+
+    const [preparedQuery, , , options] = (createSearchSourceWithQuery as jest.Mock).mock.calls[0];
+    expect(options).toEqual({ useProvidedQuery: true });
+    expect(preparedQuery).toMatchObject({ language: 'PPL', query: 'source=logs' });
+    expect(preparedQuery.queryOptions).toBeUndefined();
+  });
+
+  it('registers and clears the abort controller under abortKey', async () => {
+    const services = buildServices();
+    const controllers = new Map<string, AbortController>();
+    let keysDuringFetch: string[] = [];
+    const searchSource = mockSearchSource();
+    searchSource.fetch.mockImplementation(async () => {
+      keysDuringFetch = [...controllers.keys()];
+      return { hits: { hits: [] } };
+    });
+    (createSearchSourceWithQuery as jest.Mock).mockResolvedValue(searchSource);
+    services.data.query.queryString.getLanguageService = jest
+      .fn()
+      .mockReturnValue({ getLanguage: jest.fn().mockReturnValue({}) });
+
+    await queryExecution({
+      services,
+      query: { query: 'q', language: 'PPL' } as any,
+      queryString: 'q',
+      updateEditorStateFn,
+      updateResultFn,
+      activeQueryAbortControllers: controllers,
+      abortKey: 'B:q',
+    });
+
+    expect(keysDuringFetch).toEqual(['B:q']);
+    expect(controllers.size).toBe(0);
+  });
+});
+
+describe('resolveDatasetLanguage', () => {
+  const servicesFor = (supported?: string[]) =>
+    ({
+      data: {
+        query: {
+          queryString: {
+            getDatasetService: () => ({
+              getType: () => (supported ? { supportedLanguages: () => supported } : undefined),
+            }),
+          },
+        },
+      },
+    }) as any;
+  const promDataset = { id: 'prom', title: 'prom', type: 'PROMETHEUS' } as any;
+  const indexDataset = { id: 'logs', title: 'logs', type: 'INDEX_PATTERN' } as any;
+
+  it('switches to a language the dataset can run when it carries none', () => {
+    expect(resolveDatasetLanguage(servicesFor(['PROMQL']), promDataset, 'PPL')).toBe('PROMQL');
+  });
+
+  it('keeps the current language when the dataset can run it', () => {
+    expect(
+      resolveDatasetLanguage(servicesFor(['kuery', 'lucene', 'PPL']), indexDataset, 'PPL')
+    ).toBe('PPL');
+  });
+
+  it("prefers the dataset's own language over the first supported one", () => {
+    expect(
+      resolveDatasetLanguage(
+        servicesFor(['PPL', 'PROMQL']),
+        { ...promDataset, language: 'PROMQL' },
+        'AI'
+      )
+    ).toBe('PROMQL');
+  });
+
+  it('ignores languages the editor does not offer', () => {
+    expect(resolveDatasetLanguage(servicesFor(['kuery', 'PPL']), indexDataset, 'kuery')).toBe(
+      'PPL'
+    );
+  });
+
+  it("falls back to the dataset's or current language for an unknown dataset type", () => {
+    expect(resolveDatasetLanguage(servicesFor(undefined), indexDataset, 'PPL')).toBe('PPL');
+    expect(
+      resolveDatasetLanguage(servicesFor(undefined), { ...indexDataset, language: 'SQL' }, 'PPL')
+    ).toBe('SQL');
   });
 });

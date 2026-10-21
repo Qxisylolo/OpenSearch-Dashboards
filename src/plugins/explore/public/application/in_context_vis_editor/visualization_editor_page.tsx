@@ -47,7 +47,7 @@ export const VisualizationEditorPage = ({
     dashboard,
   } = services;
   const isMobile = useIsWithinBreakpoints(['xs', 's', 'm']);
-  const { queryBuilder } = useQueryBuilderState();
+  const { container } = useQueryBuilderState();
   const { visualizationBuilderForEditor } = useVisualizationBuilder();
 
   const {
@@ -109,13 +109,16 @@ export const VisualizationEditorPage = ({
       }
 
       visualizationBuilderForEditor.init();
-      await queryBuilder.init({ savedQueryState });
+      await container.init({ savedQueries: savedQueryState ? [savedQueryState] : undefined });
 
-      if (savedExplore.id || queryBuilder.queryState$.getValue().query !== '') {
+      if (
+        savedExplore.id ||
+        container.getAllRows().some((row) => row.queryState$.getValue().query !== '')
+      ) {
         // For an existing saved explore, execute the query on page load.
         // For a new saved explore, execute the query only when it is not empty.
         // This avoids fixing the visualization persisted as a table for an empty query.
-        queryBuilder.executeQuery();
+        container.executeAll({ userInitiated: false });
       }
       setInitialized(true);
     };
@@ -130,7 +133,7 @@ export const VisualizationEditorPage = ({
     chrome,
     isLoading,
     savedExplore,
-    queryBuilder,
+    container,
     savedVisConfig,
     savedQueryState,
     osdUrlStateStorage,
@@ -150,23 +153,24 @@ export const VisualizationEditorPage = ({
 
   useEffect(() => {
     return () => {
-      queryBuilder.reset();
+      container.reset();
       visualizationBuilderForEditor.reset();
     };
-  }, [queryBuilder, visualizationBuilderForEditor]);
+  }, [container, visualizationBuilderForEditor]);
 
   // Update variable names in queryBuilder when variables change
   useEffect(() => {
+    // Variable names are shared by every query row.
     if (!variableService) {
-      queryBuilder.setVariableNames([]);
+      container.setVariableNames([]);
       return;
     }
     const subscription = variableService.getVariables$().subscribe((variables) => {
       const variableNames = variables.map((v) => v.name);
-      queryBuilder.setVariableNames(variableNames);
+      container.setVariableNames(variableNames);
     });
     return () => subscription.unsubscribe();
-  }, [variableService, queryBuilder]);
+  }, [variableService, container]);
 
   useHeaderVariants(services, HeaderVariant.APPLICATION);
 
