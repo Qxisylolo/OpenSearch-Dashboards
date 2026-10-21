@@ -6,6 +6,7 @@
 export const CONTAINER_URL_KEY = '_c';
 export const QUERY_EDITOR_STATE_KEY = '_e';
 export const QUERY_BUILDER_QUERY_STATE_KEY = '_eq';
+export const MULTI_QUERIES_STATE_KEY = '_mq';
 export const VARIABLE_VALUES_URL_KEY = '_va';
 
 export interface ContainerState {
@@ -18,5 +19,3 @@ export interface ContainerInfo {
   containerId: string;
   containerData?: Record<string, unknown>;
 }
-
-export type ActiveBottomPanelTab = 'QUERY_TAB' | 'TRANSFORM_TAB';

@@ -6,7 +6,7 @@
 import { useObservable } from 'react-use';
 import { BehaviorSubject } from 'rxjs';
 import { EuiFlexGroup, EuiFlexItem, EuiPanel, EuiProgress } from '@elastic/eui';
-import { QueryEditorState, SupportLanguageType } from '../query_builder/query_builder';
+import { QueryEditorState, SupportLanguageType, QueryState } from '../query_builder/query_builder';
 import { EditorMode, QueryExecutionStatus } from '../../utils/state_management/types';
 import { QueryPanelWidgets } from './query_panel_widget';
 import { QueryPanelEditor } from './query_editor';
@@ -23,14 +23,17 @@ import '../visualization_editor.scss';
 
 export const QueryPanel = ({
   queryEditorState$,
+  queryState$,
 }: {
   queryEditorState$: BehaviorSubject<QueryEditorState>;
+  queryState$: BehaviorSubject<QueryState>;
 }) => {
   const queryEditorState = useObservable(queryEditorState$, queryEditorState$.getValue());
-  const languageType = queryEditorState.languageType;
+  const queryState = useObservable(queryState$, queryState$.getValue());
+  const { language, dataset } = queryState;
 
   const isPromptMode = queryEditorState.editorMode === EditorMode.Prompt;
-  const isPPLQueryMode = languageType === SupportLanguageType.ppl && !isPromptMode;
+  const isPPLQueryMode = language === SupportLanguageType.ppl && !isPromptMode;
   const {
     mode,
     showBuilder,
@@ -44,15 +47,12 @@ export const QueryPanel = ({
     handleBuilderRun,
   } = useVisualizationEditorPPLBuilder(isPPLQueryMode);
 
-  // Same editor as on the Metrics page: a source's own editor for its language, the PromQL rows
-  // only where the source has a metrics resource client for them, else a single code editor.
-  const {
-    queryState: { language, dataset },
-  } = useQueryBuilderState();
   const registry = getSourceTypeRegistry();
+  // TODO Same editor as on the Metrics page: a source's own editor for its language, the PromQL rows
+  // only where the source has a metrics resource client for them, else a single code editor.
   const sourceQueryEditor = registry.getLanguageSettings(language, dataset)?.metricsQueryEditor;
   const usesPromQLRows =
-    languageType === SupportLanguageType.promQL && registry.usesPromQLRows(language, dataset);
+    language === SupportLanguageType.promQL && registry.usesPromQLRows(language, dataset);
 
   const isLoading =
     queryEditorState?.queryStatus.status === QueryExecutionStatus.LOADING ||

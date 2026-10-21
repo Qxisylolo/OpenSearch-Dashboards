@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { EuiBetaBadge, EuiContextMenuItem, EuiContextMenuPanel, EuiPopover } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import classNames from 'classnames';
@@ -11,6 +11,7 @@ import classNames from 'classnames';
 import '../../../components/query_panel/query_panel_widgets/language_toggle/language_toggle.scss';
 import { EditorMode } from '../../utils/state_management/types';
 import { SupportLanguageType } from '../query_builder/query_builder';
+import { getInitialQueryString } from '../query_builder/utils';
 import { useEditorOperations } from '../hooks/use_editor_operations';
 import { useQueryBuilderState } from '../hooks/use_query_builder_state';
 import { useOpenSearchDashboards } from '../../../../../opensearch_dashboards_react/public';
@@ -51,34 +52,24 @@ export const LanguageToggle = () => {
   const { services } = useOpenSearchDashboards<ExploreServices>();
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const { focusEditor, switchEditorMode } = useEditorOperations();
-  const { queryBuilder, queryEditorState } = useQueryBuilderState();
+  const { queryBuilder, queryEditorState, queryState } = useQueryBuilderState();
 
-  const [languageLabel, setlanguageLabel] = useState<string>(
-    getLanguageDisplayLabel(queryEditorState.languageType)
-  );
   const { clearEditor } = useEditorOperations();
 
   const promptModeIsAvailable = queryEditorState.promptModeIsAvailable;
   const isPromptMode = queryEditorState.editorMode === EditorMode.Prompt;
-  const language = queryEditorState.languageType;
+  const language = queryState.language;
+
+  const languageLabel = getLanguageDisplayLabel(
+    (isPromptMode ? SupportLanguageType.ai : language) as SupportLanguageType
+  );
 
   const onButtonClick = () => setIsPopoverOpen(!isPopoverOpen);
   const closePopover = useCallback(() => setIsPopoverOpen(false), []);
 
-  useEffect(() => {
-    const switchLanguage =
-      queryEditorState.editorMode === EditorMode.Prompt
-        ? SupportLanguageType.ai
-        : queryEditorState.languageType;
-
-    setlanguageLabel(getLanguageDisplayLabel(switchLanguage));
-  }, [queryEditorState.editorMode, queryEditorState.languageType]);
-
   const onLanguageItemClick = useCallback(
     async (option: string) => {
       closePopover();
-
-      setlanguageLabel(option as SupportLanguageType);
 
       if (option === promptOptionText) {
         switchEditorMode(EditorMode.Prompt);
@@ -96,49 +87,65 @@ export const LanguageToggle = () => {
         }
 
         clearEditor();
+
+        const dataset = queryBuilder.queryState$.getValue().dataset;
+        // SQL needs its base query on the current dataset; the others start empty.
+        const query = getInitialQueryString(services.data.query.queryString, dataset, languageType);
+
         // Switching languages triggers a new query preparation in queryBuilder
-        queryBuilder.updateQueryEditorState({
-          languageType,
+        queryBuilder.updateQueryState({
+          language: languageType,
+          query,
+          queryOptions: undefined,
         });
       }
 
       setTimeout(() => focusEditor(true), 100);
     },
-    [closePopover, focusEditor, switchEditorMode, clearEditor, queryBuilder]
+    [
+      closePopover,
+      focusEditor,
+      switchEditorMode,
+      clearEditor,
+      queryBuilder,
+      services.data.query.queryString,
+    ]
   );
 
-  const items = useMemo(() => {
-    const output = [
-      <EuiContextMenuItem
-        key={pplOptionText}
-        onClick={() => onLanguageItemClick(pplOptionText)}
-        disabled={!isPromptMode && language === 'PPL'}
-        data-test-subj={`queryPanelFooterLanguageToggle-${pplOptionText}`}
-      >
-        {pplOptionText}
-      </EuiContextMenuItem>,
-      <EuiContextMenuItem
-        key={promQLOptionText}
-        onClick={() => onLanguageItemClick(promQLOptionText)}
-        disabled={!isPromptMode && language === 'PROMQL'}
-        data-test-subj={`queryPanelFooterLanguageToggle-${promQLOptionText}`}
-      >
-        {promQLOptionText}
-      </EuiContextMenuItem>,
-    ];
-
-    if (services.sqlSupportEnabled) {
-      output.push(
-        <EuiContextMenuItem
-          key={sqlOptionText}
-          onClick={() => onLanguageItemClick(sqlOptionText)}
-          disabled={!isPromptMode && language === 'SQL'}
-          data-test-subj={`queryPanelFooterLanguageToggle-${sqlOptionText}`}
-        >
-          {sqlOptionText}
-        </EuiContextMenuItem>
-      );
+  // Languages the current dataset can run; the dataset decides, the toggle only picks among them.
+  const datasetLanguages = useMemo(() => {
+    const dataset = queryState.dataset;
+    if (!dataset) {
+      return [language];
     }
+    return (
+      services.data?.query?.queryString
+        ?.getDatasetService?.()
+        ?.getType(dataset.type)
+        ?.supportedLanguages(dataset) ?? [language]
+    );
+  }, [queryState.dataset, language, services.data?.query?.queryString]);
+
+  const items = useMemo(() => {
+    const queryLanguages = [
+      { language: SupportLanguageType.ppl, label: pplOptionText },
+      { language: SupportLanguageType.promQL, label: promQLOptionText },
+      ...(services.sqlSupportEnabled
+        ? [{ language: SupportLanguageType.sql, label: sqlOptionText }]
+        : []),
+    ];
+    const output = queryLanguages
+      .filter((option) => datasetLanguages.includes(option.language))
+      .map((option) => (
+        <EuiContextMenuItem
+          key={option.label}
+          onClick={() => onLanguageItemClick(option.label)}
+          disabled={!isPromptMode && language === option.language}
+          data-test-subj={`queryPanelFooterLanguageToggle-${option.label}`}
+        >
+          {option.label}
+        </EuiContextMenuItem>
+      ));
 
     // whether to display AI needs to check dataset first
     if (promptModeIsAvailable) {
@@ -161,6 +168,7 @@ export const LanguageToggle = () => {
     language,
     promptModeIsAvailable,
     services.sqlSupportEnabled,
+    datasetLanguages,
   ]);
 
   return (

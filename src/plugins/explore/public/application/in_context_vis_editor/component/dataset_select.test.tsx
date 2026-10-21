@@ -32,8 +32,10 @@ jest.mock('../hooks/use_editor_operations', () => ({
 jest.mock('../query_builder/query_builder', () => ({
   SupportLanguageType: { ppl: 'PPL', promQL: 'PROMQL', ai: 'AI' },
 }));
+const mockResolveDatasetLanguage = jest.fn();
 jest.mock('../query_builder/utils', () => ({
   getRequiredSignalType: jest.fn((lang) => (lang === 'PROMQL' ? 'metrics' : ['logs', 'traces'])),
+  resolveDatasetLanguage: (...args: unknown[]) => mockResolveDatasetLanguage(...args),
 }));
 jest.mock('../../../../../opensearch_dashboards_react/public', () => ({
   useOpenSearchDashboards: jest.fn(),
@@ -72,6 +74,8 @@ const buildServices = (overrides: Record<string, any> = {}) => ({
         ]),
         getDatasetService: () => ({
           cacheDataset: mockCacheDataset,
+          // Prometheus is a registered dataset type in these tests.
+          getType: jest.fn(() => ({ id: 'PROMETHEUS' })),
         }),
       },
     },
@@ -88,6 +92,7 @@ const buildServices = (overrides: Record<string, any> = {}) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   mockGetInitialQueryByDataset.mockReturnValue({ query: '', language: 'PPL', dataset: undefined });
+  mockResolveDatasetLanguage.mockImplementation((_services, _dataset, preferred) => preferred);
 
   (useOpenSearchDashboards as jest.Mock).mockReturnValue({ services: buildServices() });
   (useQueryBuilderState as jest.Mock).mockReturnValue({
@@ -124,12 +129,49 @@ describe('DatasetSelectWidget', () => {
     });
   });
 
-  it('passes default supportedType array for PPL language', () => {
+  // it('passes default supportedType array for PPL language', () => {
+  //   render(<DatasetSelectWidget />);
+  //   expect(capturedSupportedTypes).toEqual(['INDEXES', 'INDEX_PATTERN']);
+  // });
+
+  // it('passes PROMETHEUS supportedTypes for promQL language', () => {
+  //   (useQueryBuilderState as jest.Mock).mockReturnValue({
+  //     queryEditorState: { languageType: 'PROMQL' },
+  //     queryBuilder: {
+  //       updateQueryState: mockUpdateQueryState,
+  //       updateQueryEditorState: mockUpdateQueryEditorState,
+  //     },
+  //   });
+
+  //   render(<DatasetSelectWidget />);
+  //   expect(capturedSupportedTypes).toEqual(['PROMETHEUS']);
+  // });
+
+  // it('passes logs and traces signalTypes from getRequiredSignalType', () => {
+  //   render(<DatasetSelectWidget />);
+  //   expect(capturedSignalType).toEqual(['logs', 'traces']);
+  // });
+
+  // it('passes metric signalType from getRequiredSignalType for promQL', () => {
+  //   (useQueryBuilderState as jest.Mock).mockReturnValue({
+  //     queryEditorState: { languageType: 'PROMQL' },
+  //     queryBuilder: {
+  //       updateQueryState: mockUpdateQueryState,
+  //       updateQueryEditorState: mockUpdateQueryEditorState,
+  //     },
+  //   });
+
+  //   render(<DatasetSelectWidget />);
+  //   expect(capturedSignalType).toBe('metrics');
+  // });
+
+  // The dataset decides the language, so the picker offers every type whatever the language.
+  it('passes all dataset types, including PROMETHEUS, for PPL', () => {
     render(<DatasetSelectWidget />);
-    expect(capturedSupportedTypes).toEqual(['INDEXES', 'INDEX_PATTERN']);
+    expect(capturedSupportedTypes).toEqual(['INDEXES', 'INDEX_PATTERN', 'PROMETHEUS']);
   });
 
-  it('passes PROMETHEUS supportedTypes for promQL language', () => {
+  it('passes the same dataset types for PromQL', () => {
     (useQueryBuilderState as jest.Mock).mockReturnValue({
       queryEditorState: { languageType: 'PROMQL' },
       queryBuilder: {
@@ -139,24 +181,38 @@ describe('DatasetSelectWidget', () => {
     });
 
     render(<DatasetSelectWidget />);
-    expect(capturedSupportedTypes).toEqual(['PROMETHEUS']);
+    expect(capturedSupportedTypes).toEqual(['INDEXES', 'INDEX_PATTERN', 'PROMETHEUS']);
   });
 
-  it('passes logs and traces signalTypes from getRequiredSignalType', () => {
+  it('passes logs, traces and metrics signal types', () => {
     render(<DatasetSelectWidget />);
-    expect(capturedSignalType).toEqual(['logs', 'traces']);
+    expect(capturedSignalType).toEqual(['logs', 'traces', 'metrics']);
   });
 
-  it('passes metric signalType from getRequiredSignalType for promQL', () => {
-    (useQueryBuilderState as jest.Mock).mockReturnValue({
-      queryEditorState: { languageType: 'PROMQL' },
-      queryBuilder: {
-        updateQueryState: mockUpdateQueryState,
-        updateQueryEditorState: mockUpdateQueryEditorState,
-      },
+  it('switches to a language the dataset can run when it carries none', async () => {
+    // getInitialQueryByDataset kept the current language (PPL) for a dataset without one.
+    mockResolveDatasetLanguage.mockReturnValue('PROMQL');
+    render(<DatasetSelectWidget />);
+    fireEvent.click(screen.getByTestId('select-btn'));
+    await waitFor(() => {
+      expect(mockResolveDatasetLanguage).toHaveBeenCalledWith(
+        expect.anything(),
+        { id: 'ds1', type: 'INDEX_PATTERN' },
+        'PPL'
+      );
+      expect(mockUpdateQueryState).toHaveBeenCalledWith(
+        expect.objectContaining({ language: 'PROMQL' })
+      );
     });
+  });
 
+  it('clears the previous language query options on dataset selection', async () => {
     render(<DatasetSelectWidget />);
-    expect(capturedSignalType).toBe('metrics');
+    fireEvent.click(screen.getByTestId('select-btn'));
+    await waitFor(() => {
+      expect(mockUpdateQueryState).toHaveBeenCalledWith(
+        expect.objectContaining({ queryOptions: undefined })
+      );
+    });
   });
 });

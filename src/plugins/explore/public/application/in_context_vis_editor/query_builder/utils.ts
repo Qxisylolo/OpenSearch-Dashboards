@@ -6,7 +6,9 @@
 import { i18n } from '@osd/i18n';
 import { ToastsStart } from 'opensearch-dashboards/public';
 import { ExploreServices } from '../../../types';
-import { Dataset, DEFAULT_DATA, CORE_SIGNAL_TYPES } from '../../../../../data/common';
+import { Dataset, DEFAULT_DATA, CORE_SIGNAL_TYPES, EMPTY_QUERY } from '../../../../../data/common';
+import { QueryStringContract } from '../../../../../data/public';
+
 import { ExploreFlavor } from '../../../../../explore/common';
 import { fetchFirstAvailableDataset } from '../../../application/utils/state_management/utils/redux_persistence';
 import {
@@ -149,6 +151,58 @@ export const getPreloadedQueryState = async (
   }
 };
 
+export const getInitialQueryString = (
+  queryString: QueryStringContract,
+  dataset: Dataset | undefined,
+  language: string
+) =>
+  language === SupportLanguageType.sql && dataset
+    ? queryString.getInitialQueryByDataset({ ...dataset, language }).query
+    : EMPTY_QUERY.QUERY;
+
+/**
+ * Get languages for a dataset selected in the vis editor, from its dataset type's supportedLanguages
+ */
+export const getDatasetLanguages = (
+  services: ExploreServices,
+  dataset: Dataset
+): SupportLanguageType[] => {
+  const editorLanguages = [
+    SupportLanguageType.ppl,
+    SupportLanguageType.promQL,
+    ...(services.sqlSupportEnabled ? [SupportLanguageType.sql] : []),
+  ];
+  const supported =
+    services.data?.query?.queryString
+      ?.getDatasetService?.()
+      ?.getType(dataset.type)
+      ?.supportedLanguages(dataset) ?? [];
+  return editorLanguages.filter((language) => supported.includes(language));
+};
+
+/**
+ * The language a row switches to when its dataset changes: the preferred (current) language if
+ * the dataset can run it, else the dataset's own language, else the first one it supports.
+ * A dataset often carries no `language`, so it can't be read from the dataset alone.
+ */
+export const resolveDatasetLanguage = (
+  services: ExploreServices,
+  dataset: Dataset,
+  preferred?: string
+): string | undefined => {
+  const languages: string[] = getDatasetLanguages(services, dataset);
+  if (languages.length === 0) {
+    return dataset.language ?? preferred;
+  }
+  if (preferred && languages.includes(preferred)) {
+    return preferred;
+  }
+  if (dataset.language && languages.includes(dataset.language)) {
+    return dataset.language;
+  }
+  return languages[0];
+};
+
 export const getRequiredSignalType = (languageType?: SupportLanguageType): string | string[] =>
   getSourceTypeRegistry().isMetricsLanguage(languageType)
     ? CORE_SIGNAL_TYPES.METRICS
@@ -170,19 +224,23 @@ export const isSignalTypeCompatible = (
 
 export const queryExecution = async ({
   services,
+  query,
   queryString,
   updateEditorStateFn,
   updateResultFn,
   activeQueryAbortControllers,
+  abortKey = queryString,
 }: {
   services: ExploreServices;
+  query: QueryState;
   queryString: string;
   updateEditorStateFn: (updates: Partial<QueryEditorState>) => void;
   updateResultFn: (result: ISearchResult) => void;
   activeQueryAbortControllers: Map<string, AbortController>;
+  /** Key in activeQueryAbortControllers; scope it per query row so rows don't cancel each other. */
+  abortKey?: string;
 }) => {
   // early exit if query should skipped (for PROMQL)
-  const query = services.data.query.queryString.getQuery();
   if (shouldSkipQueryExecution(query)) {
     return;
   }
@@ -199,7 +257,7 @@ export const queryExecution = async ({
     });
 
     // Abort any existing query with the same cacheKey (prevents duplicate queries)
-    const existingController = activeQueryAbortControllers.get(queryString);
+    const existingController = activeQueryAbortControllers.get(abortKey);
     if (existingController) {
       existingController.abort();
     }
@@ -209,7 +267,7 @@ export const queryExecution = async ({
     // Create abort controller for this specific query
     const abortController = new AbortController();
     // Store controller by cacheKey for individual query abort
-    activeQueryAbortControllers.set(queryString, abortController);
+    activeQueryAbortControllers.set(abortKey, abortController);
 
     services.inspectorAdapters.requests.reset();
     const title = i18n.translate('explore.discover.inspectorRequestDataTitle', {
@@ -233,11 +291,22 @@ export const queryExecution = async ({
 
     const preparedQueryObject = {
       ...query,
+      ...(getSourceTypeRegistry().isMetricsLanguage(query.language)
+        ? {}
+        : // TODO PPL add queryOptions
+          { queryOptions: undefined }),
       dataset,
       query: queryString,
     };
 
-    const searchSource = await createSearchSourceWithQuery(preparedQueryObject, dataView, services);
+    const searchSource = await createSearchSourceWithQuery(
+      preparedQueryObject,
+      dataView,
+      services,
+      {
+        useProvidedQuery: true,
+      }
+    );
 
     if ((services as any).getRequestInspectorStats && inspectorRequest) {
       inspectorRequest.stats((services as any).getRequestInspectorStats(searchSource));
@@ -285,10 +354,10 @@ export const queryExecution = async ({
         error: undefined,
       },
     });
-    activeQueryAbortControllers.delete(queryString);
+    activeQueryAbortControllers.delete(abortKey);
   } catch (error) {
     // Clean up aborted/failed query from active controllers
-    activeQueryAbortControllers.delete(queryString);
+    activeQueryAbortControllers.delete(abortKey);
     // Handle abort errors - reset query status to initial state
     if (error instanceof Error && error.name === 'AbortError') {
       updateEditorStateFn({
