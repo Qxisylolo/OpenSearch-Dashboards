@@ -10,14 +10,19 @@ import * as reactUse from 'react-use';
 
 import { useQueryBuilderState } from './use_query_builder_state';
 // import { getQueryBuilder } from '../query_builder/query_builder';
-import { getMultiQueryBuilder } from '../multi_query_builder/multi_query_builder';
+// import { getMultiQueryBuilder } from '../multi_query_builder/multi_query_builder';
+import { useMultiQueryBuilder } from '../multi_query_builder/multi_query_builder_context';
 
 // jest.mock('../query_builder/query_builder', () => ({
 //   getQueryBuilder: jest.fn(),
 // }));
 // The hook now reads the SELECTED row of the multi-query container.
-jest.mock('../multi_query_builder/multi_query_builder', () => ({
-  getMultiQueryBuilder: jest.fn(),
+// jest.mock('../multi_query_builder/multi_query_builder', () => ({
+//   getMultiQueryBuilder: jest.fn(),
+// }));
+// The session's builder comes from MultiQueryBuilderProvider's context.
+jest.mock('../multi_query_builder/multi_query_builder_context', () => ({
+  useMultiQueryBuilder: jest.fn(),
 }));
 
 jest.spyOn(reactUse, 'useObservable').mockImplementation((observable: any, initialValue: any) => {
@@ -80,7 +85,8 @@ describe('useQueryBuilderState', () => {
       multiQueryEditorState$: new BehaviorSubject({ dateRange: { from: 'now-15m', to: 'now' } }),
       getHasTimeBasedRow$: jest.fn().mockReturnValue(new BehaviorSubject(true)),
     };
-    (getMultiQueryBuilder as jest.Mock).mockReturnValue(mockContainer);
+    // (getMultiQueryBuilder as jest.Mock).mockReturnValue(mockContainer);
+    (useMultiQueryBuilder as jest.Mock).mockReturnValue(mockContainer);
   });
 
   afterEach(() => {

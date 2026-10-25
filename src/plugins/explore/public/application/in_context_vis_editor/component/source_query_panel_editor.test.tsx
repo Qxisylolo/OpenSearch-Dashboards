@@ -35,6 +35,8 @@ const setup = (
     updateQueryOptions: jest.fn(),
     onQueryExecutionSubmit: jest.fn(async () => {}),
   };
+  // Running goes through the container: every visible query runs together.
+  const container = { executeAll: jest.fn(async () => {}) };
   (useQueryBuilderState as jest.Mock).mockReturnValue({
     queryState: {
       query: 'SELECT 1',
@@ -44,9 +46,11 @@ const setup = (
     },
     queryEditorState: { isQueryEditorDirty: false, queryStatus },
     queryBuilder,
+    container,
   });
   render(<SourceQueryPanelEditor editor={MyEditor} />);
-  return queryBuilder;
+  // return queryBuilder;
+  return { queryBuilder, container };
 };
 
 describe('SourceQueryPanelEditor', () => {
@@ -65,7 +69,8 @@ describe('SourceQueryPanelEditor', () => {
   });
 
   it('writes edits and options to the query builder', () => {
-    const queryBuilder = setup();
+    // const queryBuilder = setup();
+    const { queryBuilder } = setup();
     act(() => editorProps.onChange('SELECT 2'));
     expect(queryBuilder.updateQueryState).toHaveBeenCalledWith({ query: 'SELECT 2' });
     expect(queryBuilder.updateQueryEditorState).toHaveBeenCalledWith({
@@ -76,11 +81,18 @@ describe('SourceQueryPanelEditor', () => {
     expect(queryBuilder.updateQueryOptions).toHaveBeenCalledWith({ maxDataPoints: 20 });
   });
 
-  it('runs through the query builder, applying the text it is given first', () => {
-    const queryBuilder = setup();
+  // it('runs through the query builder, applying the text it is given first', () => {
+  //   const queryBuilder = setup();
+  //   act(() => editorProps.onRun('SELECT 3'));
+  //   expect(queryBuilder.updateQueryState).toHaveBeenCalledWith({ query: 'SELECT 3' });
+  //   expect(queryBuilder.onQueryExecutionSubmit).toHaveBeenCalled();
+  // });
+  it('applies the text it is given, then runs every query through the container', () => {
+    const { queryBuilder, container } = setup();
     act(() => editorProps.onRun('SELECT 3'));
     expect(queryBuilder.updateQueryState).toHaveBeenCalledWith({ query: 'SELECT 3' });
-    expect(queryBuilder.onQueryExecutionSubmit).toHaveBeenCalled();
+    expect(container.executeAll).toHaveBeenCalled();
+    expect(queryBuilder.onQueryExecutionSubmit).not.toHaveBeenCalled();
   });
 
   it('passes the running state and the error details to the editor', () => {

@@ -49,7 +49,7 @@ import '../../pages/metrics/metrics_query_panel.scss';
  */
 export const MetricMultiQueryPanelEditor: React.FC = () => {
   const { services } = useOpenSearchDashboards<ExploreServices>();
-  const { queryState, queryBuilder } = useQueryBuilderState();
+  const { queryState, queryBuilder, container } = useQueryBuilderState();
 
   const dataConnectionId = queryState.dataset?.id ?? '';
   const resourceClientId =
@@ -133,13 +133,13 @@ export const MetricMultiQueryPanelEditor: React.FC = () => {
   );
 
   const handleRun = useCallback(() => {
-    queryBuilder.onQueryExecutionSubmit().catch((error) => {
+    container.executeAll().catch((error) => {
       services.notifications?.toasts.addError(error, {
         title: 'Query execution failed',
         toastLifeTimeMs: 2000,
       });
     });
-  }, [queryBuilder, services.notifications]);
+  }, [container, services.notifications]);
 
   const updateRow = useCallback(
     (rowId: string, updates: Partial<QueryRow>) => {

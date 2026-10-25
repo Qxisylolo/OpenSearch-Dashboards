@@ -39,14 +39,14 @@ export const useQueryPanelEditorProps = (): QueryEditorProps & { editorKey: numb
       if (!isPromptMode) {
         queryBuilder.updateQueryState({ query: queryString });
       }
-      queryBuilder.onQueryExecutionSubmit().catch((error) => {
+      container.executeAll().catch((error) => {
         services.notifications?.toasts.addError(error, {
           title: 'Query execution failed',
           toastLifeTimeMs: 2000,
         });
       });
     },
-    [isPromptMode, queryBuilder, services.notifications]
+    [isPromptMode, queryBuilder, container, services.notifications]
   );
 
   const getEditorContainerHeight = useCallback((domNode: HTMLElement | null) => {

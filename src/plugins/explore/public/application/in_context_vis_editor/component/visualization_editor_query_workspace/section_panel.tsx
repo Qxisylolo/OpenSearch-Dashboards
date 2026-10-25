@@ -13,6 +13,7 @@ export interface SectionPanelProps {
   actions?: ReactNode;
   headerContent?: ReactNode;
   children: ReactNode;
+  activeType?: string;
 }
 
 export const SectionPanel = ({
@@ -22,6 +23,7 @@ export const SectionPanel = ({
   actions,
   headerContent,
   children,
+  activeType,
 }: SectionPanelProps) => {
   return (
     <EuiPanel
@@ -33,7 +35,11 @@ export const SectionPanel = ({
       data-test-subj="sectionPanel"
     >
       {(title || headerContent) && (
-        <div className="queryWorkspaceDetail__header">
+        <div
+          className={['queryWorkspaceDetail__header', `queryWorkspaceDetail__header--${activeType}`]
+            .filter(Boolean)
+            .join(' ')}
+        >
           <EuiFlexGroup alignItems="center" gutterSize="s" responsive={false}>
             {iconType && (
               <EuiFlexItem grow={false}>

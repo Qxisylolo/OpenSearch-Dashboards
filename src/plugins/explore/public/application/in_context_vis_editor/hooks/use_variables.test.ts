@@ -24,6 +24,10 @@ jest.mock('../../../../../opensearch_dashboards_react/public', () => ({
 jest.mock('./use_query_builder_state', () => ({
   useQueryBuilderState: jest.fn(),
 }));
+// useVariables reads the container from the session's context.
+jest.mock('../multi_query_builder/multi_query_builder_context', () => ({
+  useMultiQueryBuilder: jest.fn(),
+}));
 
 // Mock prepareQueryForLanguage
 jest.mock('../../utils/languages', () => ({
@@ -35,6 +39,7 @@ import { BehaviorSubject, Subject } from 'rxjs';
 import { useVariables } from './use_variables';
 import { useOpenSearchDashboards } from '../../../../../opensearch_dashboards_react/public';
 import { useQueryBuilderState } from './use_query_builder_state';
+import { useMultiQueryBuilder } from '../multi_query_builder/multi_query_builder_context';
 import { VARIABLE_VALUES_URL_KEY } from '../types';
 import {
   Variable,
@@ -115,13 +120,20 @@ describe('useVariables', () => {
     (useOpenSearchDashboards as jest.Mock).mockReturnValue({ services: mockServices });
     // (useQueryBuilderState as jest.Mock).mockReturnValue({ queryBuilder: mockQueryBuilder });
     // Variables are wired through the container, which fans out to its rows.
+    const mockContainer = {
+      getAllRows: () => [mockQueryBuilder],
+      setInterpolationService: (svc: unknown) => mockQueryBuilder.setInterpolationService(svc),
+      // Rows never run alone: a variable change reruns the batch, which runs each row.
+      executeAll: jest.fn(() => {
+        mockQueryBuilder.executeQuery();
+        return Promise.resolve();
+      }),
+    };
     (useQueryBuilderState as jest.Mock).mockReturnValue({
       queryBuilder: mockQueryBuilder,
-      container: {
-        getAllRows: () => [mockQueryBuilder],
-        setInterpolationService: (svc: unknown) => mockQueryBuilder.setInterpolationService(svc),
-      },
+      container: mockContainer,
     });
+    (useMultiQueryBuilder as jest.Mock).mockReturnValue(mockContainer);
     (VariableService as unknown as jest.Mock).mockImplementation(() => mockVariableService);
     (VariableInterpolationService as unknown as jest.Mock).mockImplementation(
       () => mockInterpolationService

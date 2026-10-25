@@ -11,6 +11,7 @@ export interface SectionItem {
   iconType?: string;
   isHidden?: boolean;
   isValid?: boolean;
+  showStepWarning?: boolean;
 }
 
 /**

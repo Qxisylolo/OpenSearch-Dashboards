@@ -95,6 +95,7 @@ jest.mock('./utils', () => ({
   showPromptModeNotAvailableWarning: jest.fn(),
   showMissingPromptWarning: jest.fn(),
   showMissingDatasetWarning: jest.fn(),
+  showUndefinedDatasetWarning: jest.fn(),
   handleAgentError: jest.fn(),
 }));
 
@@ -131,6 +132,12 @@ describe('QueryBuilder', () => {
     });
 
     it('load query from saved state', async () => {
+      // init reads the preloaded dataset to warn about a restored query without one.
+      (getPreloadedQueryState as jest.Mock).mockResolvedValue({
+        query: '',
+        language: 'PPL',
+        dataset: undefined,
+      });
       await builder.init({
         savedQueryState: { query: 'source = logs', language: 'PPL', dataset: undefined },
       });
@@ -144,6 +151,12 @@ describe('QueryBuilder', () => {
         set: jest.fn(),
       } as any;
 
+      // init reads the preloaded dataset to warn about a restored query without one.
+      (getPreloadedQueryState as jest.Mock).mockResolvedValue({
+        query: '',
+        language: 'PPL',
+        dataset: undefined,
+      });
       await builder.init({
         savedQueryState: { query: 'source = logs', language: 'PPL', dataset: undefined },
       });
@@ -274,22 +287,56 @@ describe('QueryBuilder', () => {
       );
     });
 
-    it('does nothing when datasetView has an error', async () => {
+    // it('does nothing when datasetView has an error', async () => {
+    //   builder.setIsInitialized(true);
+    //   builder.datasetView$.next({ dataView: undefined, isLoading: false, error: 'some error' });
+    //   await builder.executeQuery();
+    //   expect(builder.queryEditorState$.value.queryStatus.status).toBe(
+    //     QueryExecutionStatus.UNINITIALIZED
+    //   );
+    // });
+    // A dataset that failed to load is the row's error, so the list and the vis can show it.
+    // it('does not execute, and reports the dataset error, when datasetView has an error', async () => {
+    // executeQuery no longer sets the error itself: it returns before resetting the status, so the
+    // error set when the dataset failed to load stays.
+    it('does not execute, and keeps the dataset load error, when datasetView has an error', async () => {
       builder.setIsInitialized(true);
+      (queryExecution as jest.Mock).mockClear();
       builder.datasetView$.next({ dataView: undefined, isLoading: false, error: 'some error' });
+      // What setupQuerySync's catchError does on a failed load.
+      (builder as any).setDatasetLoadError('some error');
       await builder.executeQuery();
-      expect(builder.queryEditorState$.value.queryStatus.status).toBe(
-        QueryExecutionStatus.UNINITIALIZED
-      );
+      expect(queryExecution).not.toHaveBeenCalled();
+      const { queryStatus } = builder.queryEditorState$.value;
+      expect(queryStatus.status).toBe(QueryExecutionStatus.ERROR);
+      expect(queryStatus.error?.message.details).toBe('some error');
     });
 
-    it('does nothing when datasetView is loading', async () => {
+    // it('does nothing when datasetView is loading', async () => {
+    //   builder.setIsInitialized(true);
+    //   builder.datasetView$.next({ dataView: undefined, isLoading: true, error: null });
+    //   await builder.executeQuery();
+    //   expect(builder.queryEditorState$.value.queryStatus.status).toBe(
+    //     QueryExecutionStatus.UNINITIALIZED
+    //   );
+    // });
+    // The page executes right after load(), while rows still load their dataset: wait, then run.
+    it('waits for the dataset to load, then executes', async () => {
       builder.setIsInitialized(true);
+      (queryExecution as jest.Mock).mockClear();
       builder.datasetView$.next({ dataView: undefined, isLoading: true, error: null });
-      await builder.executeQuery();
-      expect(builder.queryEditorState$.value.queryStatus.status).toBe(
-        QueryExecutionStatus.UNINITIALIZED
-      );
+
+      const running = builder.executeQuery();
+      await Promise.resolve();
+      expect(queryExecution).not.toHaveBeenCalled();
+
+      builder.datasetView$.next({
+        dataView: { id: 'logs', title: 'logs', fields: [] } as any,
+        isLoading: false,
+        error: null,
+      });
+      await running;
+      expect(queryExecution).toHaveBeenCalled();
     });
 
     it('executes query when dataView is ready', async () => {

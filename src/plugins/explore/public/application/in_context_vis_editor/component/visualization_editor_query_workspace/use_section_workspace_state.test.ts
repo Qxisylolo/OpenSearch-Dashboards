@@ -133,4 +133,51 @@ describe('useSectionWorkspaceState', () => {
       iconType: 'sortable',
     });
   });
+
+  describe('isValid', () => {
+    const step = (status: string, codes: string[] = []) =>
+      ({
+        instanceId: 'x',
+        definitionId: 'sort_by',
+        status,
+        issues: codes.map((code) => ({ code, message: code })),
+      }) as any;
+
+    it('passes query row validity through', () => {
+      const { result } = setup({ queryRows: [{ refId: 'A', isValid: false }] });
+      expect(result.current.sections[0].items[0].isValid).toBe(false);
+    });
+
+    // it('flags failed and missing-field steps, but not unconfigured ones', () => {
+    // Only a failed step is invalid now; a step that ran with issues shows a warning instead.
+    it('marks failed steps invalid and steps with other issues as warnings', () => {
+      const { result } = setup({
+        transformPipeline: [
+          makeInstance('t1'),
+          makeInstance('t2'),
+          makeInstance('t3'),
+          makeInstance('t4'),
+        ],
+        transformStepResults: new Map([
+          ['t1', step('failed', ['execution_error'])],
+          ['t2', step('skipped', ['missing_fields'])],
+          ['t3', step('skipped', ['invalid_config'])],
+          ['t4', step('applied', [])],
+        ]),
+      });
+      const items = result.current.sections[1].items;
+      expect(items.map((item) => item.isValid)).toEqual([false, true, true, true]);
+      expect(items.map((item) => Boolean(item.showStepWarning))).toEqual([
+        false,
+        true,
+        true,
+        false,
+      ]);
+    });
+
+    it('treats steps without a result as valid', () => {
+      const { result } = setup();
+      expect(result.current.sections[1].items.every((item) => item.isValid)).toBe(true);
+    });
+  });
 });

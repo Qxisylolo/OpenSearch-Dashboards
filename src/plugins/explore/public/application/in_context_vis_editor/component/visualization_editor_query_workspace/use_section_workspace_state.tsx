@@ -9,7 +9,14 @@ import { Section } from './utils';
 import {
   TransformationInstance,
   TransformationService,
+  TransformationStepResult,
 } from '../../../../components/data_transformations';
+
+// only for invalid transformation
+const isStepValid = (step?: TransformationStepResult) => !step || step.status !== 'failed';
+
+const showStepWarning = (step?: TransformationStepResult) =>
+  step?.issues && step?.issues?.length > 0 && step.status !== 'failed';
 
 /**
  * Plain, already-reactive data for one query row. The hook never reads a query
@@ -38,6 +45,7 @@ export interface UseSectionWorkspaceStateParams {
   queryHandlers?: QueryRowHandlers;
   transformPipeline: TransformationInstance[];
   transformationService: TransformationService;
+  transformStepResults?: Map<string, TransformationStepResult>;
   /** Notified when a query row is selected (e.g. to sync a multi builder's selectRow). */
   onSelectQuery?: (refId: string) => void;
 }
@@ -48,15 +56,12 @@ export interface UseSectionWorkspaceStateResult {
   onSelectItem: (id: string) => void;
 }
 
-/**
- * Data + selection for the workspace rail. Renders nothing: row actions and add
- * buttons are composed by the caller.
- */
 export const useSectionWorkspaceState = ({
   queryRows,
   queryHandlers = {},
   transformPipeline,
   transformationService,
+  transformStepResults,
   onSelectQuery,
 }: UseSectionWorkspaceStateParams): UseSectionWorkspaceStateResult => {
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
@@ -95,6 +100,8 @@ export const useSectionWorkspaceState = ({
           label: definition?.label ?? instance.definition_id,
           iconType: definition?.iconType ?? 'filter',
           isHidden: instance.hide,
+          isValid: isStepValid(transformStepResults?.get(instance.instance_id)),
+          showStepWarning: showStepWarning(transformStepResults?.get(instance.instance_id)),
         };
       }),
       draggable: true,
@@ -106,7 +113,7 @@ export const useSectionWorkspaceState = ({
         transformationService.setPipeline(next);
       },
     }),
-    [transformPipeline, transformationService]
+    [transformPipeline, transformationService, transformStepResults]
   );
 
   const sections = useMemo(

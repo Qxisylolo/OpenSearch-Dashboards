@@ -39,117 +39,239 @@ export interface RootState {
   results: QueryResultState;
 }
 
-// Resolve dataset based on selected language type (for in-context editor)
-// PromQL → PROMETHEUS, PPL/AI → INDEX_PATTERN
-export const resolveDatasetByLanguage = async (
-  services: ExploreServices,
-  languageType: SupportLanguageType,
-  preferredDataset?: Dataset
-): Promise<Dataset | undefined> => {
-  // Prefer URL/saved state and the current shared query before resolving the configured default.
-  const queryStringQuery = services.data?.query?.queryString?.getQuery();
-  let existingDataset = preferredDataset || queryStringQuery?.dataset;
+// export const resolveDatasetByLanguage = async (
+//   services: ExploreServices,
+//   languageType: SupportLanguageType,
+//   preferredDataset?: Dataset
+// ): Promise<Dataset | undefined> => {
+//   // Prefer URL/saved state and the current shared query before resolving the configured default.
+//   const queryStringQuery = services.data?.query?.queryString?.getQuery();
+//   let existingDataset = preferredDataset || queryStringQuery?.dataset;
 
-  if (!existingDataset) {
-    try {
-      // The editor explicitly opts in to the configured default only when no restored or current
-      // query state selected a dataset. QueryStringManager no longer resolves this implicitly.
-      existingDataset = await services.data.query.getDefaultDataset();
-    } catch {
-      // A default-dataset lookup failure should still allow the first compatible dataset fallback.
-    }
+//   if (!existingDataset) {
+//     try {
+//       // The editor explicitly opts in to the configured default only when no restored or current
+//       // query state selected a dataset. QueryStringManager no longer resolves this implicitly.
+//       existingDataset = await services.data.query.getDefaultDataset();
+//     } catch {
+//       // A default-dataset lookup failure should still allow the first compatible dataset fallback.
+//     }
+//   }
+
+//   // A metrics language (PromQL, or one a registered Metrics source lists) needs a metrics
+//   // dataset; any other language needs a logs or traces one.
+//   const isMetrics = getSourceTypeRegistry().isMetricsLanguage(languageType);
+//   const requiredSignalType = isMetrics ? CORE_SIGNAL_TYPES.METRICS : undefined;
+
+//   if (existingDataset) {
+//     try {
+//       const dataView = await services.data?.dataViews?.get(
+//         existingDataset.id,
+//         existingDataset.type !== DEFAULT_DATA.SET_TYPES.INDEX_PATTERN
+//       );
+//       // Get effective signal type from dataView or existingDataset
+//       const effectiveSignalType = dataView?.signalType || existingDataset?.signalType;
+//       // Validate signal type matches flavor
+//       if (isSignalTypeCompatible(effectiveSignalType, requiredSignalType)) {
+//         return existingDataset;
+//       }
+//     } catch {
+//       // Dataset no longer exists or validation failed
+//       // Silently continue to fetch a new dataset if validation fails
+//       // This is expected behavior when datasets are incompatible with current flavor
+//     }
+//   }
+
+//   // Fetch first available dataset of the required type
+//   const flavor = isMetrics ? ExploreFlavor.Metrics : null;
+//   return await fetchFirstAvailableDataset(services, flavor, requiredSignalType);
+// };
+
+const datasetExists = async (services: ExploreServices, dataset: Dataset): Promise<boolean> => {
+  const {
+    data: {
+      query: { queryString },
+    },
+  } = services;
+  const datasetService = queryString.getDatasetService();
+
+  // for index and Prometheus, it will be cached as dataview here
+  if (dataset.type !== DEFAULT_DATA.SET_TYPES.INDEX_PATTERN) {
+    await datasetService.cacheDataset(
+      dataset,
+      {
+        uiSettings: services.uiSettings,
+        savedObjects: services.savedObjects,
+        notifications: services.notifications,
+        http: services.http,
+        data: services.data,
+      },
+      false
+    );
+
+    return true;
   }
-
-  // A metrics language (PromQL, or one a registered Metrics source lists) needs a metrics
-  // dataset; any other language needs a logs or traces one.
-  const isMetrics = getSourceTypeRegistry().isMetricsLanguage(languageType);
-  const requiredSignalType = isMetrics ? CORE_SIGNAL_TYPES.METRICS : undefined;
-
-  if (existingDataset) {
-    try {
-      const dataView = await services.data?.dataViews?.get(
-        existingDataset.id,
-        existingDataset.type !== DEFAULT_DATA.SET_TYPES.INDEX_PATTERN
-      );
-      // Get effective signal type from dataView or existingDataset
-      const effectiveSignalType = dataView?.signalType || existingDataset?.signalType;
-      // Validate signal type matches flavor
-      if (isSignalTypeCompatible(effectiveSignalType, requiredSignalType)) {
-        return existingDataset;
-      }
-    } catch {
-      // Dataset no longer exists or validation failed
-      // Silently continue to fetch a new dataset if validation fails
-      // This is expected behavior when datasets are incompatible with current flavor
-    }
+  try {
+    // for INDEX_PATTERN
+    await services.data.dataViews.get(dataset.id);
+    return true;
+  } catch {
+    return false;
   }
-
-  // Fetch first available dataset of the required type
-  const flavor = isMetrics ? ExploreFlavor.Metrics : null;
-  return await fetchFirstAvailableDataset(services, flavor, requiredSignalType);
 };
 
-export const getPreloadedQueryState = async (
-  services: ExploreServices,
-  languageType: SupportLanguageType,
-  preferredDataset?: Dataset
-): Promise<QueryState> => {
-  // Always validate the dataset and language type
-  const selectedDataset = await resolveDatasetByLanguage(services, languageType, preferredDataset);
-
-  // Use toDataset method if available, otherwise extract minimal properties
-  let minimalDataset: Dataset | undefined;
-  if (selectedDataset) {
-    // Use type assertion to check for toDataset method
-    if (typeof (selectedDataset as any).toDataset === 'function') {
-      minimalDataset = (selectedDataset as any).toDataset();
-    } else {
-      minimalDataset = {
-        id: selectedDataset.id,
-        title: selectedDataset.title,
-        displayName: selectedDataset.displayName,
-        type: selectedDataset.type,
-        language: selectedDataset.language,
-        timeFieldName: selectedDataset.timeFieldName,
-        dataSource: selectedDataset.dataSource,
-        signalType: selectedDataset.signalType,
-      };
-    }
-  }
-
-  if (minimalDataset) {
-    // The requested (saved) language wins when the dataset's type can run it: a dataset's own
-    // `language` is only its default, and a source can offer another language on the same
-    // dataset (e.g. its own SQL dialect next to PromQL). Otherwise keep the dataset's default.
-    const supportedLanguages = services.data.query.queryString
-      .getDatasetService?.()
-      ?.getType(minimalDataset.type)
-      ?.supportedLanguages(minimalDataset);
-    const language =
-      languageType && supportedLanguages?.includes(languageType)
-        ? languageType
-        : minimalDataset.language || languageType || 'PPL';
-    const initialQueryByDataset = services.data.query.queryString.getInitialQueryByDataset({
-      ...minimalDataset,
-      language,
-    });
-
-    // override the initial query to be an empty string
-    return {
-      ...initialQueryByDataset,
-      // SQL needs a base query (SELECT * FROM ...) to be valid; PPL works with empty
-      ...(languageType !== SupportLanguageType.sql ? { query: '' } : {}),
-      // Ensure we use the minimal dataset
-      dataset: minimalDataset,
-    };
+const exactMinimalDataset = (selectedDataset: Dataset) => {
+  let minimalDataset: Dataset;
+  // Use type assertion to check for toDataset method
+  if (typeof (selectedDataset as any).toDataset === 'function') {
+    minimalDataset = (selectedDataset as any).toDataset();
   } else {
-    return {
-      query: '',
-      language: languageType ?? 'PPL',
-      dataset: undefined,
+    minimalDataset = {
+      id: selectedDataset.id,
+      title: selectedDataset.title,
+      displayName: selectedDataset.displayName,
+      type: selectedDataset.type,
+      language: selectedDataset.language,
+      timeFieldName: selectedDataset.timeFieldName,
+      dataSource: selectedDataset.dataSource,
+      signalType: selectedDataset.signalType,
     };
   }
+
+  return minimalDataset;
 };
+
+export type VerificationWarning = 'noDataset' | 'datasetDoesNotExist' | 'datasetWrongLanguage';
+
+interface VerifiedQuery {
+  query: QueryState;
+  warning?: VerificationWarning;
+}
+
+/**
+ * Verifies a query's dataset before its row is built.
+ */
+export const verifyQueryAndDataset = async (
+  services: ExploreServices,
+  query: QueryState
+): Promise<VerifiedQuery> => {
+  // 1. query doesn't have dataset
+  if (!query.dataset) {
+    return {
+      query,
+      warning: 'noDataset',
+    };
+  }
+
+  // 2. only return false when dataset(index pattern) doesn't exists
+  // for index and Prometheus, will cache datasets first as dataview
+  if (!(await datasetExists(services, query.dataset))) {
+    return {
+      query: {
+        ...query,
+        dataset: undefined,
+      },
+      warning: 'datasetDoesNotExist',
+    };
+  }
+
+  const currentLanguage = query.language;
+
+  const minimalDataset = exactMinimalDataset(query.dataset);
+  // 3. verfiy language compatibility
+  const resolvedLanguage = resolveDatasetLanguage(services, minimalDataset, currentLanguage);
+
+  if (!resolvedLanguage || resolvedLanguage === currentLanguage) {
+    return {
+      query: {
+        ...query,
+        dataset: minimalDataset,
+      },
+    };
+  }
+
+  // 4. language and dataset is not compatible
+  // The requested (saved) language wins when the dataset's type can run it: a dataset's own
+  // `language` is only its default, and a source can offer another language on the same
+  // dataset (e.g. its own SQL dialect next to PromQL). Otherwise keep the dataset's default.
+  const initialQueryByDataset = services.data.query.queryString.getInitialQueryByDataset({
+    ...minimalDataset,
+    language: resolvedLanguage,
+  });
+
+  return {
+    query: {
+      ...query,
+      dataset: minimalDataset,
+      language: resolvedLanguage,
+      query: initialQueryByDataset.query,
+      queryOptions: undefined,
+    },
+    warning: 'datasetWrongLanguage',
+  };
+};
+
+// export const getPreloadedQueryState = async (
+//   services: ExploreServices,
+//   languageType: SupportLanguageType,
+//   preferredDataset?: Dataset
+// ): Promise<QueryState> => {
+//   // Always validate the dataset and language type
+//   const selectedDataset = await resolveDatasetByLanguage(services, languageType, preferredDataset);
+
+//   // Use toDataset method if available, otherwise extract minimal properties
+//   let minimalDataset: Dataset | undefined;
+//   if (selectedDataset) {
+//     // Use type assertion to check for toDataset method
+//     if (typeof (selectedDataset as any).toDataset === 'function') {
+//       minimalDataset = (selectedDataset as any).toDataset();
+//     } else {
+//       minimalDataset = {
+//         id: selectedDataset.id,
+//         title: selectedDataset.title,
+//         displayName: selectedDataset.displayName,
+//         type: selectedDataset.type,
+//         language: selectedDataset.language,
+//         timeFieldName: selectedDataset.timeFieldName,
+//         dataSource: selectedDataset.dataSource,
+//         signalType: selectedDataset.signalType,
+//       };
+//     }
+//   }
+
+//   if (minimalDataset) {
+//     // The requested (saved) language wins when the dataset's type can run it: a dataset's own
+//     // `language` is only its default, and a source can offer another language on the same
+//     // dataset (e.g. its own SQL dialect next to PromQL). Otherwise keep the dataset's default.
+//     const supportedLanguages = services.data.query.queryString
+//       .getDatasetService?.()
+//       ?.getType(minimalDataset.type)
+//       ?.supportedLanguages(minimalDataset);
+//     const language =
+//       languageType && supportedLanguages?.includes(languageType)
+//         ? languageType
+//         : minimalDataset.language || languageType || 'PPL';
+//     const initialQueryByDataset = services.data.query.queryString.getInitialQueryByDataset({
+//       ...minimalDataset,
+//       language,
+//     });
+
+//     // override the initial query to be an empty string
+//     return {
+//       ...initialQueryByDataset,
+//       // SQL needs a base query (SELECT * FROM ...) to be valid; PPL works with empty
+//       ...(languageType !== SupportLanguageType.sql ? { query: '' } : {}),
+//       // Ensure we use the minimal dataset
+//       dataset: minimalDataset,
+//     };
+//   } else {
+//     return {
+//       query: '',
+//       language: languageType ?? 'PPL',
+//       dataset: undefined,
+//     };
+//   }
+// };
 
 export const getInitialQueryString = (
   queryString: QueryStringContract,
@@ -167,6 +289,8 @@ export const getDatasetLanguages = (
   services: ExploreServices,
   dataset: Dataset
 ): SupportLanguageType[] => {
+  // currently, editor only supports three languages
+  // TODO check again for metric
   const editorLanguages = [
     SupportLanguageType.ppl,
     SupportLanguageType.promQL,
@@ -185,23 +309,36 @@ export const getDatasetLanguages = (
  * the dataset can run it, else the dataset's own language, else the first one it supports.
  * A dataset often carries no `language`, so it can't be read from the dataset alone.
  */
+
 export const resolveDatasetLanguage = (
   services: ExploreServices,
   dataset: Dataset,
   preferred?: string
 ): string | undefined => {
-  const languages: string[] = getDatasetLanguages(services, dataset);
-  if (languages.length === 0) {
-    return dataset.language ?? preferred;
-  }
-  if (preferred && languages.includes(preferred)) {
+  const supportedLanguages: string[] = getDatasetLanguages(services, dataset);
+
+  if (preferred && supportedLanguages.includes(preferred)) {
     return preferred;
   }
-  if (dataset.language && languages.includes(dataset.language)) {
+
+  if (dataset.language && supportedLanguages.includes(dataset.language)) {
     return dataset.language;
   }
-  return languages[0];
+
+  return supportedLanguages?.[0] ?? dataset?.language ?? 'PPL';
 };
+
+/**
+ * queryOptions only apply to metrics languages (PromQL);
+ * any other language gets them cleared. Cleared with `undefined`, not omitted: the global
+ * queryString.setQuery merges into the current query, so an omitted key would keep the old value.
+ */
+export const withLanguageQueryOptions = <T extends { language?: string; queryOptions?: unknown }>(
+  query: T
+): T =>
+  getSourceTypeRegistry().isMetricsLanguage(query.language)
+    ? query
+    : { ...query, queryOptions: undefined };
 
 export const getRequiredSignalType = (languageType?: SupportLanguageType): string | string[] =>
   getSourceTypeRegistry().isMetricsLanguage(languageType)
@@ -289,12 +426,18 @@ export const queryExecution = async ({
 
     const dataset = await services.data.dataViews.convertToDataset(dataView);
 
+    // const preparedQueryObject = {
+    //   ...query,
+    //   ...(getSourceTypeRegistry().isMetricsLanguage(query.language)
+    //     ? {}
+    //     : // TODO PPL add queryOptions
+    //       { queryOptions: undefined }),
+    //   dataset,
+    //   query: queryString,
+    // };
+    // TODO PPL add queryOptions
     const preparedQueryObject = {
-      ...query,
-      ...(getSourceTypeRegistry().isMetricsLanguage(query.language)
-        ? {}
-        : // TODO PPL add queryOptions
-          { queryOptions: undefined }),
+      ...withLanguageQueryOptions(query),
       dataset,
       query: queryString,
     };
@@ -426,6 +569,49 @@ export const showMissingPromptWarning = (toasts: ToastsStart) => {
       defaultMessage: 'Enter a question to automatically generate a query',
     }),
     id: 'missing-prompt-warning',
+  });
+};
+
+// A restored query's dataset no longer existed.
+export const showDatasetNoLongerExistsWarning = (toasts: ToastsStart, refId: string) => {
+  toasts.addWarning({
+    title: i18n.translate('explore.queryPanel.datasetNoExistTitle', {
+      defaultMessage: 'Query {refId}: dataset no longer exists',
+      values: { refId },
+    }),
+    text: i18n.translate('explore.queryPanel.datasetNoExistText', {
+      defaultMessage: 'Select one to run it.',
+    }),
+    id: `dataset-no-exist-${refId}`,
+  });
+};
+
+// A restored query's language didn't fit its dataset and was replaced.
+export const showDatasetQueryLanguageIncompatibleWarning = (toasts: ToastsStart, refId: string) => {
+  toasts.addWarning({
+    title: i18n.translate('explore.queryPanel.datasetQueryLanguageIncompatibleWarningTitle', {
+      defaultMessage: 'Query {refId} has incompatible languagege against selected dataset',
+      values: { refId },
+    }),
+    text: i18n.translate('explore.queryPanel.datasetQueryLanguageIncompatibleWarningText', {
+      defaultMessage:
+        "Its dataset can't run current query, so the query was reset. Write it again.",
+    }),
+    id: `dataset-query-language-incompatible-${refId}`,
+  });
+};
+
+// A restored query without a dataset stays empty
+export const showUndefinedDatasetWarning = (toasts: ToastsStart, refId: string) => {
+  toasts.addWarning({
+    title: i18n.translate('explore.queryPanel.undefinedDatasetTitle', {
+      defaultMessage: 'Query {refId} has no dataset',
+      values: { refId },
+    }),
+    text: i18n.translate('explore.queryPanel.undefinedDatasetText', {
+      defaultMessage: 'Select a dataset to run it.',
+    }),
+    id: `undefined-dataset-${refId}`,
   });
 };
 

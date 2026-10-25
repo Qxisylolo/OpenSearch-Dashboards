@@ -95,6 +95,13 @@ const buildServices = () => ({
   },
   osdUrlStateStorage: { get: mockOsdUrlStateStorageGet },
   scopedHistory: { push: mockScopedHistoryPush },
+  // Saving reads the shared filters at save time.
+  data: { query: { filterManager: { getFilters: jest.fn().mockReturnValue([]) } } },
+});
+
+// Saving reads the selected row's query state (no global query mirror).
+const buildQueryBuilder = () => ({
+  queryState$: new BehaviorSubject({ query: 'source=logs', language: 'PPL' }),
 });
 
 const mockSavedExplore = {
@@ -129,6 +136,7 @@ beforeEach(() => {
       lastExecutedTranslatedQuery: undefined,
     },
     datasetView: { dataView: undefined },
+    queryBuilder: buildQueryBuilder(),
   });
   (useCurrentExploreId as jest.Mock).mockReturnValue(undefined);
   (useSavedExplore as jest.Mock).mockReturnValue({ savedExplore: { id: undefined } });
@@ -222,6 +230,7 @@ describe('SaveVisButton', () => {
         lastExecutedTranslatedQuery: undefined,
       },
       datasetView: { dataView: undefined },
+      queryBuilder: buildQueryBuilder(),
     });
 
     render(<SaveVisButton />);

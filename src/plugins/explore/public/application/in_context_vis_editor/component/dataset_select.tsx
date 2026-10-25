@@ -112,6 +112,9 @@ export const DatasetSelectWidget = () => {
         showNonTimeFieldDatasets={false}
         controlledSelectedDataset={queryState.dataset}
         isControlled={true}
+        // A row without a dataset stays empty until the user picks one; a fresh editor's first
+        // row already gets the default dataset from loadContainerState.
+        autoSelectDefault={false}
       />
     </div>
   );

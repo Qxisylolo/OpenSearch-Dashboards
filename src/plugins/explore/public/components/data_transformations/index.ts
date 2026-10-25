@@ -14,6 +14,7 @@ export type {
   ConfigFieldSpec,
   ConfigFieldKind,
   ConfigEnumOption,
+  TransformationStepResult,
 } from './types';
 
 export {
@@ -56,6 +57,7 @@ export {
 } from './transformations/add_field_transformation';
 
 export { TransformPanel } from './transform_panel';
+export { TransformationStepIssues } from './transformation_step_issues';
 export type { TransformPanelProps } from './transform_panel';
 export { TransformSelectorButton } from './transform_selector_overlay';
 export { useTransformationService } from './use_transformation_service';

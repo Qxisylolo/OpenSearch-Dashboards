@@ -31,7 +31,7 @@
   }
 
   &__header--query {
-    box-shadow: inset 3px 0 0 $euiColorWarning;
+    box-shadow: inset 3px 0 0 $euiColorPrimary;
   }
 
   &__divider {
@@ -99,13 +99,22 @@
   }
 
   &__button--queries {
-    box-shadow: inset 3px 0 0 $euiColorWarning;
+    box-shadow: inset 3px 0 0 $euiColorPrimary;
   }
 
   &__button--queries.queryWorkspaceSectionItem__button-isActive {
-    background: transparentize($euiColorWarning, 0.9);
-    border-color: $euiColorWarning;
+    background: transparentize($euiColorPrimary, 0.9);
+    border-color: $euiColorPrimary;
+    box-shadow: inset 3px 0 0 $euiColorPrimary;
+  }
+
+  &__button.queryWorkspaceSectionItem__button-hasWarning {
     box-shadow: inset 3px 0 0 $euiColorWarning;
+
+    &.queryWorkspaceSectionItem__button-isActive {
+      background: transparentize($euiColorWarning, 0.9);
+      border-color: $euiColorWarning;
+    }
   }
 
   // Failed query / broken transformation.

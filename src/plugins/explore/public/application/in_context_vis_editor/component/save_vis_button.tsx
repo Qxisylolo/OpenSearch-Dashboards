@@ -16,7 +16,7 @@ import { ExploreServices } from '../../../types';
 
 import { useQueryBuilderState } from '../hooks/use_query_builder_state';
 import { useSavedExplore } from '../../utils/hooks/use_saved_explore';
-import { useSearchContext } from '../../../components/query_panel/utils/use_search_context';
+import { withLanguageQueryOptions } from '../query_builder/utils';
 import { Query } from '../../../../../data/common';
 
 import { SavedExplore } from '../../../saved_explore';
@@ -46,7 +46,7 @@ const saveButtonText = i18n.translate('explore.topNav.saveVisButton.save', {
 });
 
 export const SaveVisButton = () => {
-  const { queryEditorState, datasetView, resultState } = useQueryBuilderState();
+  const { queryBuilder, queryEditorState, datasetView, resultState } = useQueryBuilderState();
   const { visualizationBuilderForEditor: visualizationBuilder } = useVisualizationBuilder();
   const visConfig = useObservable(visualizationBuilder.visConfig$);
   const transformationService = visualizationBuilder.getTransformationService();
@@ -69,7 +69,9 @@ export const SaveVisButton = () => {
   const { originatingApp, containerInfo } =
     osdUrlStateStorage?.get<ContainerState>(CONTAINER_URL_KEY) ?? {};
 
-  const searchContext = useSearchContext();
+  // TODO delte global search context
+  // The global query no longer mirrors the selected row, so save from the row itself.
+  // const searchContext = useSearchContext();
 
   const navigateTo = useCallback(
     ({ id, newTitle }: { id: string; newTitle: string }) => {
@@ -173,7 +175,11 @@ export const SaveVisButton = () => {
       const searchSourceInstance = savedExploreToSave.searchSourceFields;
 
       if (searchSourceInstance) {
-        searchSourceInstance.query = searchContext.query as Query;
+        // searchSourceInstance.query = searchContext.query as Query;
+        // The selected row's query (one row is saved until saved objects hold every row).
+        searchSourceInstance.query = withLanguageQueryOptions(
+          queryBuilder.queryState$.getValue()
+        ) as Query;
         if (isPromptMode) {
           // for prompt mode, store previous generated query string
           searchSourceInstance.query = {
@@ -181,7 +187,9 @@ export const SaveVisButton = () => {
             query: queryEditorState.lastExecutedTranslatedQuery ?? '',
           };
         }
-        searchSourceInstance.filter = searchContext.filters;
+        // searchSourceInstance.filter = searchContext.filters;
+        // Filters are shared by every row; read them at save time.
+        searchSourceInstance.filter = services.data.query.filterManager.getFilters();
       }
 
       const saveOptions = {
@@ -214,8 +222,10 @@ export const SaveVisButton = () => {
       datasetView.dataView,
       exploreId,
       navigateTo,
-      searchContext.query,
-      searchContext.filters,
+      // searchContext.query,
+      // searchContext.filters,
+      queryBuilder,
+      services.data.query.filterManager,
       toastNotifications,
       isPromptMode,
       queryEditorState.lastExecutedTranslatedQuery,
