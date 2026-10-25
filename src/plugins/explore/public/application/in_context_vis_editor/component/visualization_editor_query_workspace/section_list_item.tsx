@@ -40,6 +40,7 @@ export const SectionListItem = ({
           isActive ? 'queryWorkspaceSectionItem__button-isActive' : '',
           item.isHidden ? 'queryWorkspaceSectionItem__button-isHidden' : '',
           item.isValid === false ? 'queryWorkspaceSectionItem__button-isInvalid' : '',
+          item.showStepWarning ? 'queryWorkspaceSectionItem__button-hasWarning' : '',
         ]
           .filter(Boolean)
           .join(' ')}

@@ -23,7 +23,7 @@ export const SourceQueryPanelEditor: React.FC<{
   editor: ComponentType<SourceTypeQueryEditorProps>;
 }> = ({ editor }) => {
   const { services } = useOpenSearchDashboards<ExploreServices>();
-  const { queryState, queryEditorState, queryBuilder } = useQueryBuilderState();
+  const { queryState, queryEditorState, queryBuilder, container } = useQueryBuilderState();
   const { language, dataset } = queryState;
 
   const languageTitle = useMemo(
@@ -42,14 +42,14 @@ export const SourceQueryPanelEditor: React.FC<{
   const onRun = useCallback(
     (query?: string) => {
       if (query !== undefined) queryBuilder.updateQueryState({ query });
-      queryBuilder.onQueryExecutionSubmit().catch((error) => {
+      container.executeAll().catch((error) => {
         services.notifications?.toasts.addError(error, {
           title: 'Query execution failed',
           toastLifeTimeMs: 2000,
         });
       });
     },
-    [queryBuilder, services.notifications]
+    [queryBuilder, container, services.notifications]
   );
 
   const onQueryOptionsChange = useCallback(

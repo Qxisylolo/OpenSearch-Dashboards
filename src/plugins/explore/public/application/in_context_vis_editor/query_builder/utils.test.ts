@@ -6,8 +6,8 @@
 import {
   isSignalTypeCompatible,
   getRequiredSignalType,
-  resolveDatasetByLanguage,
-  getPreloadedQueryState,
+  // resolveDatasetByLanguage,
+  // getPreloadedQueryState,
   queryExecution,
   showPromptModeNotAvailableWarning,
   showMissingPromptWarning,
@@ -16,14 +16,14 @@ import {
   resolveDatasetLanguage,
 } from './utils';
 import { SupportLanguageType } from './query_builder';
-import {
-  SourceTypeRegistryService,
-  setSourceTypeRegistry,
-} from '../../../services/source_type_registry';
-import { ExploreFlavor } from '../../../../common';
+// import {
+//   SourceTypeRegistryService,
+//   setSourceTypeRegistry,
+// } from '../../../services/source_type_registry';
+// import { ExploreFlavor } from '../../../../common';
 import { AgentError, ProhibitedQueryError } from '../../../components/query_panel/utils/error';
 import { QueryExecutionStatus } from '../../../application/utils/state_management/types';
-import { fetchFirstAvailableDataset } from '../../../application/utils/state_management/utils/redux_persistence';
+// import { fetchFirstAvailableDataset } from '../../../application/utils/state_management/utils/redux_persistence';
 import {
   createSearchSourceWithQuery,
   shouldSkipQueryExecution,
@@ -169,159 +169,161 @@ const buildServices = () =>
     notifications: { toasts: { addError: jest.fn() } },
   }) as any;
 
-describe('resolveDatasetByLanguage', () => {
-  it('returns existing dataset when signal type is compatible', async () => {
-    const services = buildServices();
-    const result = await resolveDatasetByLanguage(services, SupportLanguageType.ppl, mockDataset);
-    expect(result).toBe(mockDataset);
-    expect(fetchFirstAvailableDataset).not.toHaveBeenCalled();
-  });
-
-  it('fetches first available dataset when existing dataset is incompatible', async () => {
-    const services = buildServices();
-    (services.data.dataViews.get as jest.Mock).mockResolvedValue({ signalType: 'metrics' });
-    const availableDataset = { id: 'fallback', title: 'fallback-index', type: 'INDEX_PATTERN' };
-    (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(availableDataset);
-
-    const result = await resolveDatasetByLanguage(services, SupportLanguageType.ppl, mockDataset);
-    expect(result).toBe(availableDataset);
-  });
-
-  it('uses the configured default when no existing dataset is selected', async () => {
-    const services = buildServices();
-    services.data.query.queryString.getQuery.mockReturnValue({});
-    const defaultDataset = {
-      id: 'default',
-      title: 'default-index',
-      type: 'INDEX_PATTERN',
-    };
-    services.data.query.getDefaultDataset.mockResolvedValue(defaultDataset);
-    const availableDataset = { id: 'fallback', title: 'fallback-index', type: 'INDEX_PATTERN' };
-    (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(availableDataset);
-
-    const result = await resolveDatasetByLanguage(services, SupportLanguageType.ppl);
-
-    expect(result).toBe(defaultDataset);
-    expect(services.data.query.getDefaultDataset).toHaveBeenCalledTimes(1);
-    expect(fetchFirstAvailableDataset).not.toHaveBeenCalled();
-  });
-
-  it('fetches first available dataset when no configured default is available', async () => {
-    const services = buildServices();
-    services.data.query.queryString.getQuery.mockReturnValue({});
-    const availableDataset = { id: 'fallback', title: 'fallback-index', type: 'INDEX_PATTERN' };
-    (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(availableDataset);
-
-    const result = await resolveDatasetByLanguage(services, SupportLanguageType.ppl);
-
-    expect(result).toBe(availableDataset);
-  });
-});
-
-describe("a registered Metrics source's own language", () => {
-  const metricsDataset = {
-    id: 'my-metrics',
-    title: 'My metrics',
-    type: 'MY_DATASET_TYPE',
-    signalType: 'metrics',
-  };
-  beforeEach(() => {
-    const registry = new SourceTypeRegistryService();
-    registry.register({
-      id: 'my-source',
-      label: 'My Source',
-      datasetTypes: ['MY_DATASET_TYPE'],
-      flavors: [ExploreFlavor.Metrics],
-      languageSettings: { MY_SQL: {} },
-      resolveDefaultDataset: async () => undefined,
-    });
-    setSourceTypeRegistry(registry);
-  });
-  afterEach(() => setSourceTypeRegistry(new SourceTypeRegistryService()));
-
-  it('needs a metrics dataset, like PromQL', () => {
-    expect(getRequiredSignalType('MY_SQL' as SupportLanguageType)).toBe('metrics');
-  });
-
-  it("keeps a saved visualization's metrics dataset", async () => {
-    const services = buildServices();
-    (services.data.dataViews.get as jest.Mock).mockResolvedValue({ signalType: 'metrics' });
-
-    const result = await resolveDatasetByLanguage(
-      services,
-      'MY_SQL' as SupportLanguageType,
-      metricsDataset
-    );
-
-    expect(result).toBe(metricsDataset);
-    expect(fetchFirstAvailableDataset).not.toHaveBeenCalled();
-  });
-
-  it('falls back to a metrics dataset, not a logs index pattern', async () => {
-    const services = buildServices();
-    (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(metricsDataset);
-
-    await resolveDatasetByLanguage(services, 'MY_SQL' as SupportLanguageType, mockDataset);
-
-    expect(fetchFirstAvailableDataset).toHaveBeenCalledWith(
-      services,
-      ExploreFlavor.Metrics,
-      'metrics'
-    );
-  });
-
-  // The dataset carries PROMQL as its default, but the visualization was saved in MY_SQL.
-  const withDatasetType = (supported: string[]) => {
-    const services = buildServices();
-    (services.data.dataViews.get as jest.Mock).mockResolvedValue({ signalType: 'metrics' });
-    services.data.query.queryString.getDatasetService = () => ({
-      getType: () => ({ supportedLanguages: () => supported }),
-    });
-    return services;
-  };
-  const datasetWithDefault = { ...metricsDataset, language: 'PROMQL' };
-
-  it("reopens a saved visualization in its saved language, not the dataset's default", async () => {
-    const services = withDatasetType(['PROMQL', 'MY_SQL']);
-
-    await getPreloadedQueryState(services, 'MY_SQL' as SupportLanguageType, datasetWithDefault);
-
-    expect(services.data.query.queryString.getInitialQueryByDataset).toHaveBeenCalledWith(
-      expect.objectContaining({ language: 'MY_SQL' })
-    );
-  });
-
-  it("keeps the dataset's default when its type can't run the saved language", async () => {
-    const services = withDatasetType(['PROMQL']);
-
-    await getPreloadedQueryState(services, 'MY_SQL' as SupportLanguageType, datasetWithDefault);
-
-    expect(services.data.query.queryString.getInitialQueryByDataset).toHaveBeenCalledWith(
-      expect.objectContaining({ language: 'PROMQL' })
-    );
-  });
-});
-
-describe('getPreloadedQueryState', () => {
-  it('returns query state with dataset when dataset is resolved', async () => {
-    const services = buildServices();
-    (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(mockDataset);
-
-    const result = await getPreloadedQueryState(services, SupportLanguageType.ppl);
-    expect(result).toMatchObject({ query: '', dataset: mockDataset });
-  });
-
-  it('returns empty query state when no dataset is resolved', async () => {
-    const services = buildServices();
-    services.data.query.queryString.getQuery.mockReturnValue({});
-    services.data.query.queryString.getDefaultQuery.mockReturnValue({});
-    (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(undefined);
-
-    const result = await getPreloadedQueryState(services, SupportLanguageType.ppl);
-    expect(result).toEqual({ query: '', language: SupportLanguageType.ppl, dataset: undefined });
-  });
-});
-
+// resolveDatasetByLanguage / getPreloadedQueryState were removed: rows start from the state
+// loadContainerState resolves (container_state_utils.ts), and verifyQueryAndDataset checks it.
+// describe('resolveDatasetByLanguage', () => {
+//   it('returns existing dataset when signal type is compatible', async () => {
+//     const services = buildServices();
+//     const result = await resolveDatasetByLanguage(services, SupportLanguageType.ppl, mockDataset);
+//     expect(result).toBe(mockDataset);
+//     expect(fetchFirstAvailableDataset).not.toHaveBeenCalled();
+//   });
+//
+//   it('fetches first available dataset when existing dataset is incompatible', async () => {
+//     const services = buildServices();
+//     (services.data.dataViews.get as jest.Mock).mockResolvedValue({ signalType: 'metrics' });
+//     const availableDataset = { id: 'fallback', title: 'fallback-index', type: 'INDEX_PATTERN' };
+//     (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(availableDataset);
+//
+//     const result = await resolveDatasetByLanguage(services, SupportLanguageType.ppl, mockDataset);
+//     expect(result).toBe(availableDataset);
+//   });
+//
+//   it('uses the configured default when no existing dataset is selected', async () => {
+//     const services = buildServices();
+//     services.data.query.queryString.getQuery.mockReturnValue({});
+//     const defaultDataset = {
+//       id: 'default',
+//       title: 'default-index',
+//       type: 'INDEX_PATTERN',
+//     };
+//     services.data.query.getDefaultDataset.mockResolvedValue(defaultDataset);
+//     const availableDataset = { id: 'fallback', title: 'fallback-index', type: 'INDEX_PATTERN' };
+//     (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(availableDataset);
+//
+//     const result = await resolveDatasetByLanguage(services, SupportLanguageType.ppl);
+//
+//     expect(result).toBe(defaultDataset);
+//     expect(services.data.query.getDefaultDataset).toHaveBeenCalledTimes(1);
+//     expect(fetchFirstAvailableDataset).not.toHaveBeenCalled();
+//   });
+//
+//   it('fetches first available dataset when no configured default is available', async () => {
+//     const services = buildServices();
+//     services.data.query.queryString.getQuery.mockReturnValue({});
+//     const availableDataset = { id: 'fallback', title: 'fallback-index', type: 'INDEX_PATTERN' };
+//     (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(availableDataset);
+//
+//     const result = await resolveDatasetByLanguage(services, SupportLanguageType.ppl);
+//
+//     expect(result).toBe(availableDataset);
+//   });
+// });
+//
+// describe("a registered Metrics source's own language", () => {
+//   const metricsDataset = {
+//     id: 'my-metrics',
+//     title: 'My metrics',
+//     type: 'MY_DATASET_TYPE',
+//     signalType: 'metrics',
+//   };
+//   beforeEach(() => {
+//     const registry = new SourceTypeRegistryService();
+//     registry.register({
+//       id: 'my-source',
+//       label: 'My Source',
+//       datasetTypes: ['MY_DATASET_TYPE'],
+//       flavors: [ExploreFlavor.Metrics],
+//       languageSettings: { MY_SQL: {} },
+//       resolveDefaultDataset: async () => undefined,
+//     });
+//     setSourceTypeRegistry(registry);
+//   });
+//   afterEach(() => setSourceTypeRegistry(new SourceTypeRegistryService()));
+//
+//   it('needs a metrics dataset, like PromQL', () => {
+//     expect(getRequiredSignalType('MY_SQL' as SupportLanguageType)).toBe('metrics');
+//   });
+//
+//   it("keeps a saved visualization's metrics dataset", async () => {
+//     const services = buildServices();
+//     (services.data.dataViews.get as jest.Mock).mockResolvedValue({ signalType: 'metrics' });
+//
+//     const result = await resolveDatasetByLanguage(
+//       services,
+//       'MY_SQL' as SupportLanguageType,
+//       metricsDataset
+//     );
+//
+//     expect(result).toBe(metricsDataset);
+//     expect(fetchFirstAvailableDataset).not.toHaveBeenCalled();
+//   });
+//
+//   it('falls back to a metrics dataset, not a logs index pattern', async () => {
+//     const services = buildServices();
+//     (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(metricsDataset);
+//
+//     await resolveDatasetByLanguage(services, 'MY_SQL' as SupportLanguageType, mockDataset);
+//
+//     expect(fetchFirstAvailableDataset).toHaveBeenCalledWith(
+//       services,
+//       ExploreFlavor.Metrics,
+//       'metrics'
+//     );
+//   });
+//
+//   // The dataset carries PROMQL as its default, but the visualization was saved in MY_SQL.
+//   const withDatasetType = (supported: string[]) => {
+//     const services = buildServices();
+//     (services.data.dataViews.get as jest.Mock).mockResolvedValue({ signalType: 'metrics' });
+//     services.data.query.queryString.getDatasetService = () => ({
+//       getType: () => ({ supportedLanguages: () => supported }),
+//     });
+//     return services;
+//   };
+//   const datasetWithDefault = { ...metricsDataset, language: 'PROMQL' };
+//
+//   it("reopens a saved visualization in its saved language, not the dataset's default", async () => {
+//     const services = withDatasetType(['PROMQL', 'MY_SQL']);
+//
+//     await getPreloadedQueryState(services, 'MY_SQL' as SupportLanguageType, datasetWithDefault);
+//
+//     expect(services.data.query.queryString.getInitialQueryByDataset).toHaveBeenCalledWith(
+//       expect.objectContaining({ language: 'MY_SQL' })
+//     );
+//   });
+//
+//   it("keeps the dataset's default when its type can't run the saved language", async () => {
+//     const services = withDatasetType(['PROMQL']);
+//
+//     await getPreloadedQueryState(services, 'MY_SQL' as SupportLanguageType, datasetWithDefault);
+//
+//     expect(services.data.query.queryString.getInitialQueryByDataset).toHaveBeenCalledWith(
+//       expect.objectContaining({ language: 'PROMQL' })
+//     );
+//   });
+// });
+//
+// describe('getPreloadedQueryState', () => {
+//   it('returns query state with dataset when dataset is resolved', async () => {
+//     const services = buildServices();
+//     (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(mockDataset);
+//
+//     const result = await getPreloadedQueryState(services, SupportLanguageType.ppl);
+//     expect(result).toMatchObject({ query: '', dataset: mockDataset });
+//   });
+//
+//   it('returns empty query state when no dataset is resolved', async () => {
+//     const services = buildServices();
+//     services.data.query.queryString.getQuery.mockReturnValue({});
+//     services.data.query.queryString.getDefaultQuery.mockReturnValue({});
+//     (fetchFirstAvailableDataset as jest.Mock).mockResolvedValue(undefined);
+//
+//     const result = await getPreloadedQueryState(services, SupportLanguageType.ppl);
+//     expect(result).toEqual({ query: '', language: SupportLanguageType.ppl, dataset: undefined });
+//   });
+// });
+//
 describe('queryExecution', () => {
   const updateEditorStateFn = jest.fn();
   const updateResultFn = jest.fn();

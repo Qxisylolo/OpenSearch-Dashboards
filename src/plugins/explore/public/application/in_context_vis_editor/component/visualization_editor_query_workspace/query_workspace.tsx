@@ -19,7 +19,10 @@ import { SectionItem } from './utils';
 import { useQueryBuilderState } from '../../hooks/use_query_builder_state';
 import { QueryPanel } from '../visualization_editor_query_panel';
 import { DatasetSelectWidget } from '../dataset_select';
-import { TransformationService } from '../../../../components/data_transformations';
+import {
+  TransformationService,
+  TransformationStepIssues,
+} from '../../../../components/data_transformations';
 import { QueryExecutionStatus } from '../../../utils/state_management/types';
 import { TransformationAddButton } from './add_transformation_button';
 import './query_workspace.scss';
@@ -181,13 +184,16 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
       if (!instance) return null;
       const { Editor } = instance;
       return (
-        <Editor
-          config={instance.config}
-          onChange={(newConfig) =>
-            transformServices.updateInstanceConfig(instance.instance_id, newConfig)
-          }
-          availableFields={stageFieldsMap.get(instance.instance_id) ?? []}
-        />
+        <>
+          <TransformationStepIssues step={transformStepResults.get(instance.instance_id)} />
+          <Editor
+            config={instance.config}
+            onChange={(newConfig) =>
+              transformServices.updateInstanceConfig(instance.instance_id, newConfig)
+            }
+            availableFields={stageFieldsMap.get(instance.instance_id) ?? []}
+          />
+        </>
       );
     }
 

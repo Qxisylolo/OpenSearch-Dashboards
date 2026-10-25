@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BehaviorSubject, Subscription, from, of } from 'rxjs';
-import { distinctUntilChanged, switchMap, filter } from 'rxjs/operators';
+import { BehaviorSubject, EMPTY, Subscription, from, of } from 'rxjs';
+import { catchError, distinctUntilChanged, switchMap, filter } from 'rxjs/operators';
 import moment from 'moment';
 import { MutableRefObject } from 'react';
 import { firstValueFrom } from '@osd/std';
@@ -31,13 +31,13 @@ import { getPromptModeIsAvailable } from '../../../application/utils/get_prompt_
 import { generatePromQLWithAgUi } from '../../../application/utils/query_assist/promql_generator';
 import {
   queryExecution,
-  getPreloadedQueryState,
   showPromptModeNotAvailableWarning,
   showMissingPromptWarning,
   showMissingDatasetWarning,
   handleAgentError,
+  withLanguageQueryOptions,
 } from './utils';
-import { getSourceTypeRegistry } from '../../../services/source_type_registry';
+import { EXPLORE_DEFAULT_LANGUAGE } from '../../../../common';
 
 export enum SupportLanguageType {
   ppl = 'PPL',
@@ -73,6 +73,10 @@ export interface DatasetViewState {
   isLoading: boolean;
   error: string | null;
 }
+
+// Marks a queryStatus error as a dataset load failure (not a query failure), so a later
+// successful load can clear it.
+const DATASET_LOAD_ERROR = 'Error loading dataset';
 
 export const initialQueryStatus = {
   status: QueryExecutionStatus.UNINITIALIZED,
@@ -135,61 +139,33 @@ export class QueryBuilder {
     this.getInterpolationService = getInterpolationService;
   }
 
-  async init(options?: {
-    savedQueryState?: QueryState;
-    savedEditorState?: Partial<QueryEditorState>;
-  }) {
+  // Initialize row with given and merged state
+  init(options?: { savedQueryState?: QueryState; savedEditorState?: Partial<QueryEditorState> }) {
     if (this.isInitialized) {
       return;
     }
-
-    const languageType = options?.savedQueryState?.language ?? SupportLanguageType.ppl;
-
-    const preferredDataset = options?.savedQueryState?.dataset;
-
-    const queryOptions = options?.savedQueryState?.queryOptions ?? {};
-
-    // Retrieve the preloaded query state based on the language type for a new explore object,
-    // or validate whether the URL dataset is compatible with the language type before proceeding.
-    // This prevents errors that would otherwise be thrown and avoids invalid operations
-    // that sync to the global query string, which is consumed by other components like the data timepicker.
-    // This ensures that the returned dataset is either valid or explicitly undefined.
-
-    const preloadedQueryState = await getPreloadedQueryState(
-      this.getServices(),
-      languageType as SupportLanguageType,
-      preferredDataset
-    );
-
-    // this.updateQueryEditorState({ languageType: languageType as SupportLanguageType });
 
     if (typeof options?.savedEditorState?.isHidden === 'boolean') {
       this.updateQueryEditorState({ isHidden: options.savedEditorState.isHidden });
     }
 
-    const finalQuery = options?.savedQueryState?.query ?? '';
-    // apply query
-    const finalQueryState = {
-      ...preloadedQueryState,
-      query: finalQuery,
-      // Metrics languages (PromQL, or a registered Metrics source's own) keep their options.
-      ...(getSourceTypeRegistry().isMetricsLanguage(languageType) && queryOptions
-        ? { queryOptions }
-        : {}),
-    };
-
-    this.updateQueryState(finalQueryState);
+    this.updateQueryState(
+      withLanguageQueryOptions(
+        options?.savedQueryState ?? {
+          query: '',
+          language: EXPLORE_DEFAULT_LANGUAGE,
+          dataset: undefined,
+        }
+      )
+    );
     this.updateQueryEditorState({
-      // The preloaded dataset may only run its own default language.
       editorMode: EditorMode.Query,
       queryStatus: initialQueryStatus,
     });
 
     this.setupQuerySync();
-    // The dataset decides the language now: a language switch keeps the dataset, so there's no
-    // default dataset to preload for it.
-    // this.setupLanguageSync();
-    await this.waitForDatasetReady();
+
+    // await this.waitForDatasetReady();
     this.setIsInitialized(true);
   }
 
@@ -210,7 +186,12 @@ export class QueryBuilder {
   private setupQuerySync() {
     const querySyncSub = this.queryState$
       .pipe(
-        distinctUntilChanged((prev, curr) => isEqual(prev, curr)),
+        // Only a dataset or language change triggers fetch dataview. Other edits (query text,
+        // options) must not reach here: it would cancel a load still in flight.
+        distinctUntilChanged(
+          (prev, curr) =>
+            isEqual(prev.dataset, curr.dataset) && isEqual(prev.language, curr.language)
+        ),
         switchMap((newQuery) => {
           // Compare against this row's own previous state: the global query string reflects
           // whichever row is selected.
@@ -219,16 +200,27 @@ export class QueryBuilder {
           const isDatasetChanged = !isEqual(prevQuery?.dataset, newQuery?.dataset);
           const isLanguageChanged = !isEqual(prevQuery?.language, newQuery?.language);
 
-          // // languageType mirrors the query's language (set by the dataset or the language toggle).
-          // if (isLanguageChanged && newQuery?.language) {
-          //   this.updateQueryEditorState({ languageType: newQuery.language as SupportLanguageType });
-          // }
-
           // sync dataset change
           // check isLanguageChanged and isInitialized for the initial sync
           if (isDatasetChanged || isLanguageChanged || !this.isInitialized) {
             this.datasetView$.next({ ...this.datasetView$.getValue(), isLoading: true });
-            return from(this.handleDatasetChange(newQuery));
+
+            // Handle the error here to avoid error stops stream
+            return from(this.handleDatasetChange(newQuery)).pipe(
+              catchError((error) => {
+                const message = `Error loading dataset: ${error.message}`;
+                this.datasetView$.next({
+                  dataView: undefined,
+                  isLoading: false,
+                  error: message,
+                });
+                this.setDatasetLoadError(message);
+                this.getServices().notifications?.toasts.addError(error, {
+                  title: `Query ${this.refId}: error loading dataset`,
+                });
+                return EMPTY;
+              })
+            );
           }
 
           return of(null); // no change
@@ -242,16 +234,10 @@ export class QueryBuilder {
             isLoading: false,
             error: null,
           });
-        },
-        error: (error) => {
-          this.datasetView$.next({
-            dataView: undefined,
-            isLoading: false,
-            error: `Error loading dataset: ${error.message}`,
-          });
-          this.getServices().notifications?.toasts.addError(error, {
-            title: 'Error loading dataset',
-          });
+          // A dataset that loads again (the user picked another one) clears its load error.
+          if (this.queryEditorState$.value.queryStatus.error?.error === DATASET_LOAD_ERROR) {
+            this.updateQueryEditorState({ queryStatus: initialQueryStatus });
+          }
         },
       });
 
@@ -457,18 +443,34 @@ export class QueryBuilder {
     return firstValueFrom(this.datasetView$.pipe(filter((dv) => !dv.isLoading)));
   }
 
+  // HTTP failures carry a status code; others (e.g. a deleted index pattern) don't.
+  private setDatasetLoadError(message: string) {
+    this.updateQueryEditorState({
+      queryStatus: {
+        status: QueryExecutionStatus.ERROR,
+        error: {
+          // TODO decide if deleted
+          statusCode: 0,
+          error: DATASET_LOAD_ERROR,
+          message: { details: message, reason: DATASET_LOAD_ERROR },
+          originalErrorMessage: message,
+        },
+      },
+    });
+  }
+
   async executeQuery() {
     this.clearResultState();
 
+    const datasetView = await this.waitForDatasetReady();
+
+    if (datasetView.error) return;
     this.updateQueryEditorState({
       queryStatus: initialQueryStatus,
     });
 
-    if (
-      this.datasetView$.value.isLoading ||
-      this.datasetView$.value.error ||
-      !this.datasetView$.value.dataView
-    ) {
+    // No dataset (e.g. a restored row without one): nothing to run, the row doesn't take part.
+    if (!datasetView.dataView) {
       return;
     }
     const currentQuery = this.queryState$.value;
