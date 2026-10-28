@@ -3,19 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useObservable } from 'react-use';
 import { EuiEmptyPrompt, EuiResizableContainer, EuiSpacer } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import { SectionList } from './section_list';
 import { SectionPanel } from './section_panel';
-import {
-  QueryRowHandlers,
-  QueryRowItem,
-  useSectionWorkspaceState,
-} from './use_section_workspace_state';
 import { QueryAddButton, QueryItemActions, TransformItemActions } from './section_item_actions';
-import { SectionItem } from './utils';
+import {
+  QueryRowItem,
+  SectionItem,
+  buildQuerySection,
+  buildTransformSection,
+  resolveActiveSelection,
+} from './utils';
 import { useQueryBuilderState } from '../../hooks/use_query_builder_state';
 import { QueryPanel } from '../visualization_editor_query_panel';
 import { DatasetSelectWidget } from '../dataset_select';
@@ -23,8 +24,8 @@ import {
   TransformationService,
   TransformationStepIssues,
 } from '../../../../components/data_transformations';
-import { QueryExecutionStatus } from '../../../utils/state_management/types';
 import { TransformationAddButton } from './add_transformation_button';
+import { QueryRowIssues } from './query_row_issues';
 import './query_workspace.scss';
 
 export interface QueryWorkspaceProps {
@@ -32,7 +33,7 @@ export interface QueryWorkspaceProps {
 }
 
 export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
-  const { queryBuilder, queryEditorState } = useQueryBuilderState();
+  const { queryBuilder, container } = useQueryBuilderState();
   const transformPipeline = useObservable(
     transformServices.pipeline$,
     transformServices.pipeline$.getValue()
@@ -46,28 +47,87 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
     transformServices.stepResults$.getValue()
   );
 
-  const isQueryValid = queryEditorState.queryStatus?.status !== QueryExecutionStatus.ERROR;
-  const queryRows: QueryRowItem[] = useMemo(
-    () => [
-      { refId: queryBuilder.refId, isHidden: queryEditorState.isHidden, isValid: isQueryValid },
-    ],
-    [queryBuilder.refId, queryEditorState.isHidden, isQueryValid]
-  );
-  // TODO Single builder for now; the multi builder will resolve this from its rows.
-  const getQueryRowBuilder = useCallback(
-    (refId?: string) => (refId === queryBuilder.refId ? queryBuilder : undefined),
-    [queryBuilder]
-  );
-  // TODO No add/remove/reorder for queries until the multi query builder is wired in.
-  const queryHandlers = useMemo<QueryRowHandlers>(() => ({}), []);
+  // Every row of the container, each with its own hidden / valid flags.
+  const queryRowItems$ = useMemo(() => container.getQueryRowItems$(), [container]);
+  const queryRows: QueryRowItem[] = useObservable(queryRowItems$, container.getQueryRowItems());
 
-  const { sections, active, onSelectItem } = useSectionWorkspaceState({
-    queryRows,
-    queryHandlers,
-    transformPipeline,
-    transformationService: transformServices,
-    transformStepResults,
-  });
+  const getQueryRowBuilder = useCallback(
+    (refId?: string) => (refId ? container.getRow(refId) : undefined),
+    [container]
+  );
+
+  // Only a transformation selection is kept here; the query selection is the container's
+  // selected row (which the editor and widgets follow), so the two can't disagree.
+  const [selectedTransformationId, setSelectedTransformationId] = useState<string>();
+
+  const selectQueryRow = useCallback(
+    (refId: string) => {
+      setSelectedTransformationId(undefined);
+      container.selectRow(refId);
+    },
+    [container]
+  );
+
+  // Read the pipeline at call time: a just-added step isn't in transformPipeline until the next
+  // render. Anything else is a query row.
+  const onSelectItem = useCallback(
+    (id: string) => {
+      if (transformServices.pipeline$.getValue().some((t) => t.instance_id === id)) {
+        setSelectedTransformationId(id);
+      } else {
+        selectQueryRow(id);
+      }
+    },
+    [selectQueryRow, transformServices]
+  );
+
+  const queryHandlers = useMemo(
+    () => ({
+      onAdd: () => selectQueryRow(container.addRow().refId),
+      onRemove: (refId: string) => container.removeRow(refId),
+      onReorder: (fromIndex: number, toIndex: number) => container.reorderRows(fromIndex, toIndex),
+      onDuplicate: (refId: string) => {
+        const copy = container.duplicateRow(refId);
+        if (copy) selectQueryRow(copy.refId);
+      },
+      onToggleHide: (refId: string) => {
+        const row = container.getRow(refId);
+        row?.updateQueryEditorState({ isHidden: !row.getQueryEditorState().isHidden });
+      },
+    }),
+    [container, selectQueryRow]
+  );
+
+  const removeTransformation = useCallback(
+    (id: string) => {
+      transformServices.removeInstance(id);
+      // The open step was removed: go back to the first query.
+      if (id === selectedTransformationId) {
+        const firstRow = container.getAllRows()[0];
+        if (firstRow) selectQueryRow(firstRow.refId);
+      }
+    },
+    [container, selectQueryRow, selectedTransformationId, transformServices]
+  );
+
+  const sections = useMemo(
+    () => [
+      buildQuerySection(queryRows, queryHandlers.onReorder),
+      buildTransformSection(transformPipeline, transformServices, transformStepResults),
+    ],
+    [queryRows, queryHandlers, transformPipeline, transformServices, transformStepResults]
+  );
+
+  const active = useMemo(
+    () =>
+      resolveActiveSelection({
+        queryIds: queryRows.map((row) => row.refId),
+        transformIds: transformPipeline.map((t) => t.instance_id),
+        selectedQueryRefId: queryBuilder.refId,
+        selectedTransformationId,
+      }),
+    [queryRows, transformPipeline, queryBuilder.refId, selectedTransformationId]
+  );
   const activeItemId = active.activeItemId;
 
   const onAddTransformation = useCallback(
@@ -97,6 +157,8 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
                 item={item}
                 canRemove={!!queryHandlers.onRemove && queryRows.length > 1}
                 onRemove={queryHandlers.onRemove}
+                onToggleHide={queryHandlers.onToggleHide}
+                onDuplicate={queryHandlers.onDuplicate}
               />
             ),
           };
@@ -114,14 +176,21 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
               <TransformItemActions
                 item={item}
                 onToggleHide={(id) => transformServices.toggleInstanceHide(id)}
-                onRemove={(id) => transformServices.removeInstance(id)}
+                onRemove={removeTransformation}
               />
             ),
           };
         }
         return section;
       }),
-    [onAddTransformation, queryHandlers, queryRows.length, sections, transformServices]
+    [
+      onAddTransformation,
+      queryHandlers,
+      queryRows.length,
+      removeTransformation,
+      sections,
+      transformServices,
+    ]
   );
 
   const sectionPanelMeta = useMemo(() => {
@@ -169,13 +238,15 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
     if (active.currentActive === 'query') {
       const row = getQueryRowBuilder(active.activeItemId);
       if (!row) return null;
-      // Keyed by row so switching queries remounts the editor
       return (
-        <QueryPanel
-          key={row.refId}
-          queryState$={row.queryState$}
-          queryEditorState$={row.queryEditorState$}
-        />
+        <>
+          <QueryRowIssues key={`issues-${row.refId}`} queryEditorState$={row.queryEditorState$} />
+          <QueryPanel
+            key={row.refId}
+            queryState$={row.queryState$}
+            queryEditorState$={row.queryEditorState$}
+          />
+        </>
       );
     }
 

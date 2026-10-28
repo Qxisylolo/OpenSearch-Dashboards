@@ -45,7 +45,7 @@ describe('normalizeUrlEditorState', () => {
 
   it('keeps multi-query editor state', () => {
     const state = {
-      selectedRow: 'B',
+      selectedRowRefId: 'B',
       maxDataPoints: 500,
       rows: [
         ['A', { languageType: 'PPL', isHidden: false }],
@@ -57,9 +57,9 @@ describe('normalizeUrlEditorState', () => {
 
   it('turns a single-query editor state into row A', () => {
     expect(normalizeUrlEditorState({ languageType: 'PPL', isQueryEditorDirty: true })).toEqual({
-      selectedRow: 'A',
-      // rows: [['A', { languageType: 'PPL', isHidden: undefined }]],
-      rows: [['A', { isHidden: undefined }]],
+      selectedRowRefId: 'A',
+
+      rows: [['A', { isHidden: false }]],
     });
   });
 });

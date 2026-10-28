@@ -9,11 +9,10 @@ import { EXPLORE_DEFAULT_LANGUAGE } from '../../../../common';
 import { ExploreServices } from '../../../types';
 import { QueryState } from '../query_builder/query_builder';
 import {
-  getInitialQueryString,
   resolveDatasetLanguage,
-  showDatasetNoLongerExistsWarning,
+  getInitialQueryString,
   showDatasetQueryLanguageIncompatibleWarning,
-  showUndefinedDatasetWarning,
+  showDatasetNoLongerExistsWarning,
   verifyQueryAndDataset,
   VerificationWarning,
 } from '../query_builder/utils';
@@ -130,11 +129,8 @@ export const loadContainerState = async (
   // Rows verify in parallel.
   const queries = await Promise.all(
     container.queries.map(async ([refId, query]): Promise<UrlRowEntry<QueryState>> => {
-      if (!query.dataset) {
-        warnings.push({ kind: 'noDataset', refId });
-        return [refId, query];
-      }
       const { query: verified, warning } = await verifyQueryAndDataset(services, query);
+
       if (warning) warnings.push({ kind: warning, refId });
       return [refId, verified];
     })
@@ -148,9 +144,6 @@ export const showContainerStateWarnings = (
 ) => {
   warnings.forEach((warning) => {
     switch (warning.kind) {
-      case 'noDataset':
-        showUndefinedDatasetWarning(toasts, warning.refId);
-        break;
       case 'datasetDoesNotExist':
         showDatasetNoLongerExistsWarning(toasts, warning.refId);
         break;

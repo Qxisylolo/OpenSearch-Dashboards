@@ -9,8 +9,6 @@ import { ExploreServices } from '../../../types';
 import { Dataset, DEFAULT_DATA, CORE_SIGNAL_TYPES, EMPTY_QUERY } from '../../../../../data/common';
 import { QueryStringContract } from '../../../../../data/public';
 
-import { ExploreFlavor } from '../../../../../explore/common';
-import { fetchFirstAvailableDataset } from '../../../application/utils/state_management/utils/redux_persistence';
 import {
   QueryState,
   QueryEditorState,
@@ -141,7 +139,7 @@ const exactMinimalDataset = (selectedDataset: Dataset) => {
   return minimalDataset;
 };
 
-export type VerificationWarning = 'noDataset' | 'datasetDoesNotExist' | 'datasetWrongLanguage';
+export type VerificationWarning = 'datasetDoesNotExist' | 'datasetWrongLanguage';
 
 interface VerifiedQuery {
   query: QueryState;
@@ -155,15 +153,14 @@ export const verifyQueryAndDataset = async (
   services: ExploreServices,
   query: QueryState
 ): Promise<VerifiedQuery> => {
-  // 1. query doesn't have dataset
+  // 1. query doesn't have dataset, do nothing(user need to select one)
   if (!query.dataset) {
     return {
       query,
-      warning: 'noDataset',
     };
   }
 
-  // 2. only return false when dataset(index pattern) doesn't exists
+  // 2. only return false when dataset(index pattern) doesn't exists, set dataset undefined and let user to select one
   // for index and Prometheus, will cache datasets first as dataview
   if (!(await datasetExists(services, query.dataset))) {
     return {
@@ -190,7 +187,7 @@ export const verifyQueryAndDataset = async (
     };
   }
 
-  // 4. language and dataset is not compatible
+  // 4. if language is not compatible with dataset, use resolved supported language from dataset.
   // The requested (saved) language wins when the dataset's type can run it: a dataset's own
   // `language` is only its default, and a source can offer another language on the same
   // dataset (e.g. its own SQL dialect next to PromQL). Otherwise keep the dataset's default.
@@ -365,17 +362,14 @@ export const queryExecution = async ({
   queryString,
   updateEditorStateFn,
   updateResultFn,
-  activeQueryAbortControllers,
-  abortKey = queryString,
+  activeQueryAbortController,
 }: {
   services: ExploreServices;
   query: QueryState;
   queryString: string;
   updateEditorStateFn: (updates: Partial<QueryEditorState>) => void;
   updateResultFn: (result: ISearchResult) => void;
-  activeQueryAbortControllers: Map<string, AbortController>;
-  /** Key in activeQueryAbortControllers; scope it per query row so rows don't cancel each other. */
-  abortKey?: string;
+  activeQueryAbortController: AbortController;
 }) => {
   // early exit if query should skipped (for PROMQL)
   if (shouldSkipQueryExecution(query)) {
@@ -392,19 +386,6 @@ export const queryExecution = async ({
         error: undefined,
       },
     });
-
-    // Abort any existing query with the same cacheKey (prevents duplicate queries)
-    const existingController = activeQueryAbortControllers.get(abortKey);
-    if (existingController) {
-      existingController.abort();
-    }
-    // Don't auto-abort other queries - let them complete unless explicitly cancelled
-    // This prevents data loading issues when multiple queries are running concurrently
-
-    // Create abort controller for this specific query
-    const abortController = new AbortController();
-    // Store controller by cacheKey for individual query abort
-    activeQueryAbortControllers.set(abortKey, abortController);
 
     services.inspectorAdapters.requests.reset();
     const title = i18n.translate('explore.discover.inspectorRequestDataTitle', {
@@ -467,10 +448,14 @@ export const queryExecution = async ({
 
     // Execute query
     const rawResults = await searchSource.fetch({
-      abortSignal: abortController.signal,
+      abortSignal: activeQueryAbortController.signal,
       withLongNumeralsSupport: await services.uiSettings.get('data:withLongNumerals'),
       ...(languageConfig?.fields?.formatter ? { formatter: languageConfig.fields.formatter } : {}),
     });
+
+    if (activeQueryAbortController.signal.aborted) {
+      return;
+    }
 
     // Add response stats to inspector
     inspectorRequest
@@ -497,10 +482,11 @@ export const queryExecution = async ({
         error: undefined,
       },
     });
-    activeQueryAbortControllers.delete(abortKey);
   } catch (error) {
-    // Clean up aborted/failed query from active controllers
-    activeQueryAbortControllers.delete(abortKey);
+    if (activeQueryAbortController.signal.aborted) {
+      return;
+    }
+
     // Handle abort errors - reset query status to initial state
     if (error instanceof Error && error.name === 'AbortError') {
       updateEditorStateFn({
@@ -590,7 +576,7 @@ export const showDatasetNoLongerExistsWarning = (toasts: ToastsStart, refId: str
 export const showDatasetQueryLanguageIncompatibleWarning = (toasts: ToastsStart, refId: string) => {
   toasts.addWarning({
     title: i18n.translate('explore.queryPanel.datasetQueryLanguageIncompatibleWarningTitle', {
-      defaultMessage: 'Query {refId} has incompatible languagege against selected dataset',
+      defaultMessage: 'Query {refId} has incompatible language against selected dataset',
       values: { refId },
     }),
     text: i18n.translate('explore.queryPanel.datasetQueryLanguageIncompatibleWarningText', {
@@ -612,6 +598,54 @@ export const showUndefinedDatasetWarning = (toasts: ToastsStart, refId: string) 
       defaultMessage: 'Select a dataset to run it.',
     }),
     id: `undefined-dataset-${refId}`,
+  });
+};
+
+// Several rows run together: the time range the agent generated for one row is not applied.
+export const showGeneratedTimeRangeIgnoredWarning = (
+  toasts: ToastsStart,
+  refId: string,
+  timeRange: { from: string; to: string }
+) => {
+  toasts.addWarning({
+    title: i18n.translate('explore.queryPanel.generatedTimeRangeIgnoredTitle', {
+      defaultMessage: 'Query {refId}: generated time range not applied',
+      values: { refId },
+    }),
+    text: i18n.translate('explore.queryPanel.generatedTimeRangeIgnoredText', {
+      defaultMessage:
+        'Several queries share one time range. Set {from} to {to} in the time picker to use it.',
+      values: { from: timeRange.from, to: timeRange.to },
+    }),
+    id: `generated-time-range-ignored-${refId}`,
+  });
+};
+
+export const showSkippedQueriesWarning = (
+  toasts: ToastsStart,
+  { noDataset, emptyQuery }: { noDataset: string[]; emptyQuery: string[] }
+) => {
+  const lines = [
+    noDataset.length > 0
+      ? i18n.translate('explore.queryPanel.skippedNoDatasetText', {
+          defaultMessage: 'Query {refIds}: no dataset selected.',
+          values: { refIds: noDataset.join(', ') },
+        })
+      : undefined,
+    emptyQuery.length > 0
+      ? i18n.translate('explore.queryPanel.skippedEmptyQueryText', {
+          defaultMessage: 'Query {refIds}: the query is empty.',
+          values: { refIds: emptyQuery.join(', ') },
+        })
+      : undefined,
+  ].filter(Boolean);
+  if (lines.length === 0) return;
+  toasts.addWarning({
+    title: i18n.translate('explore.queryPanel.skippedQueriesTitle', {
+      defaultMessage: 'Some queries were skipped',
+    }),
+    text: lines.join(' '),
+    id: 'skipped-queries-warning',
   });
 };
 

@@ -53,6 +53,8 @@ export class VisualizationBuilder {
   visConfig$ = new BehaviorSubject<ChartConfig | undefined>(undefined);
   data$ = new BehaviorSubject<VisData | undefined>(undefined);
   showRawTable$ = new BehaviorSubject<boolean>(false);
+  // which query's result the raw table shows (multi-query editor)
+  rawTableRefId$ = new BehaviorSubject<string | undefined>(undefined);
   isVisDirty$ = new BehaviorSubject<boolean>(false);
 
   constructor({ getUrlStateStorage }: Options) {
@@ -181,6 +183,10 @@ export class VisualizationBuilder {
 
   setShowRawTable(on: boolean) {
     this.showRawTable$.next(on);
+  }
+
+  setRawTableRefId(refId?: string) {
+    this.rawTableRefId$.next(refId);
   }
 
   setIsVisDirty(on: boolean) {
@@ -555,6 +561,7 @@ export class VisualizationBuilder {
     this.visConfig$.complete();
     this.data$.complete();
     this.showRawTable$.complete();
+    this.rawTableRefId$.complete();
     this.isVisDirty$.complete();
   }
 
@@ -564,6 +571,7 @@ export class VisualizationBuilder {
     this.visConfig$ = new BehaviorSubject<ChartConfig | undefined>(undefined);
     this.data$ = new BehaviorSubject<VisData | undefined>(undefined);
     this.showRawTable$ = new BehaviorSubject<boolean>(false);
+    this.rawTableRefId$ = new BehaviorSubject<string | undefined>(undefined);
     this.isVisDirty$ = new BehaviorSubject<boolean>(false);
     this.transformationService = createNoOpTransformationService();
     this.lastRawRows = [];

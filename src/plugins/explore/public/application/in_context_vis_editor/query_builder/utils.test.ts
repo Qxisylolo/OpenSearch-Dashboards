@@ -6,8 +6,6 @@
 import {
   isSignalTypeCompatible,
   getRequiredSignalType,
-  // resolveDatasetByLanguage,
-  // getPreloadedQueryState,
   queryExecution,
   showPromptModeNotAvailableWarning,
   showMissingPromptWarning,
@@ -16,14 +14,8 @@ import {
   resolveDatasetLanguage,
 } from './utils';
 import { SupportLanguageType } from './query_builder';
-// import {
-//   SourceTypeRegistryService,
-//   setSourceTypeRegistry,
-// } from '../../../services/source_type_registry';
-// import { ExploreFlavor } from '../../../../common';
 import { AgentError, ProhibitedQueryError } from '../../../components/query_panel/utils/error';
 import { QueryExecutionStatus } from '../../../application/utils/state_management/types';
-// import { fetchFirstAvailableDataset } from '../../../application/utils/state_management/utils/redux_persistence';
 import {
   createSearchSourceWithQuery,
   shouldSkipQueryExecution,
@@ -325,13 +317,14 @@ const buildServices = () =>
 // });
 //
 describe('queryExecution', () => {
+  const emptyQuery = { query: '', language: SupportLanguageType.ppl };
   const updateEditorStateFn = jest.fn();
   const updateResultFn = jest.fn();
-  const activeQueryAbortControllers = new Map<string, AbortController>();
+  let activeQueryAbortController: AbortController;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    activeQueryAbortControllers.clear();
+    activeQueryAbortController = new AbortController();
   });
 
   it('skips execution when shouldSkipQueryExecution returns true', async () => {
@@ -340,11 +333,11 @@ describe('queryExecution', () => {
 
     await queryExecution({
       services,
-      query: {},
+      query: emptyQuery,
       queryString: '| head 10',
       updateEditorStateFn,
       updateResultFn,
-      activeQueryAbortControllers,
+      activeQueryAbortController,
     });
 
     expect(updateEditorStateFn).not.toHaveBeenCalled();
@@ -364,11 +357,11 @@ describe('queryExecution', () => {
 
     await queryExecution({
       services,
-      query: {},
+      query: emptyQuery,
       queryString: 'source=logs',
       updateEditorStateFn,
       updateResultFn,
-      activeQueryAbortControllers,
+      activeQueryAbortController,
     });
 
     expect(updateEditorStateFn).toHaveBeenCalledWith(
@@ -398,11 +391,11 @@ describe('queryExecution', () => {
 
     await queryExecution({
       services,
-      query: {},
+      query: emptyQuery,
       queryString: 'source=logs',
       updateEditorStateFn,
       updateResultFn,
-      activeQueryAbortControllers,
+      activeQueryAbortController,
     });
 
     expect(updateEditorStateFn).toHaveBeenCalledWith(
@@ -427,11 +420,11 @@ describe('queryExecution', () => {
 
     await queryExecution({
       services,
-      query: {},
+      query: emptyQuery,
       queryString: 'source=logs',
       updateEditorStateFn,
       updateResultFn,
-      activeQueryAbortControllers,
+      activeQueryAbortController,
     });
 
     expect(updateEditorStateFn).toHaveBeenCalledWith(
@@ -459,11 +452,11 @@ describe('queryExecution', () => {
     await expect(
       queryExecution({
         services,
-        query: {},
+        query: emptyQuery,
         queryString: 'source=logs',
         updateEditorStateFn,
         updateResultFn,
-        activeQueryAbortControllers,
+        activeQueryAbortController,
       })
     ).rejects.toThrow('error');
 
@@ -502,7 +495,7 @@ describe('queryExecution per-row isolation', () => {
       queryString: 'source=logs',
       updateEditorStateFn,
       updateResultFn,
-      activeQueryAbortControllers: new Map(),
+      activeQueryAbortController: new AbortController(),
     });
 
     const [preparedQuery, , , options] = (createSearchSourceWithQuery as jest.Mock).mock.calls[0];
@@ -511,13 +504,13 @@ describe('queryExecution per-row isolation', () => {
     expect(preparedQuery.queryOptions).toBeUndefined();
   });
 
-  it('registers and clears the abort controller under abortKey', async () => {
+  it('uses the active abort controller for the request', async () => {
     const services = buildServices();
-    const controllers = new Map<string, AbortController>();
-    let keysDuringFetch: string[] = [];
+    const controller = new AbortController();
+    let signalDuringFetch: AbortSignal | undefined;
     const searchSource = mockSearchSource();
-    searchSource.fetch.mockImplementation(async () => {
-      keysDuringFetch = [...controllers.keys()];
+    searchSource.fetch.mockImplementation(async ({ abortSignal }) => {
+      signalDuringFetch = abortSignal;
       return { hits: { hits: [] } };
     });
     (createSearchSourceWithQuery as jest.Mock).mockResolvedValue(searchSource);
@@ -531,12 +524,63 @@ describe('queryExecution per-row isolation', () => {
       queryString: 'q',
       updateEditorStateFn,
       updateResultFn,
-      activeQueryAbortControllers: controllers,
-      abortKey: 'B:q',
+      activeQueryAbortController: controller,
     });
 
-    expect(keysDuringFetch).toEqual(['B:q']);
-    expect(controllers.size).toBe(0);
+    expect(signalDuringFetch).toBe(controller.signal);
+  });
+
+  it('drops the response when the run is aborted while fetching', async () => {
+    const services = buildServices();
+    const controller = new AbortController();
+    const searchSource = mockSearchSource();
+    searchSource.fetch.mockImplementation(async () => {
+      controller.abort();
+      return { hits: { hits: [{ _id: '1' }] } };
+    });
+    (createSearchSourceWithQuery as jest.Mock).mockResolvedValue(searchSource);
+    services.data.query.queryString.getLanguageService = jest
+      .fn()
+      .mockReturnValue({ getLanguage: jest.fn().mockReturnValue({}) });
+
+    await queryExecution({
+      services,
+      query: { query: 'q', language: 'PPL' } as any,
+      queryString: 'q',
+      updateEditorStateFn,
+      updateResultFn,
+      activeQueryAbortController: controller,
+    });
+
+    expect(updateResultFn).not.toHaveBeenCalled();
+    // Only the LOADING update from before the fetch.
+    expect(updateEditorStateFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes nothing and does not throw when an aborted run fails', async () => {
+    const services = buildServices();
+    const controller = new AbortController();
+    const searchSource = mockSearchSource();
+    searchSource.fetch.mockImplementation(async () => {
+      controller.abort();
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    });
+    (createSearchSourceWithQuery as jest.Mock).mockResolvedValue(searchSource);
+    services.data.query.queryString.getLanguageService = jest
+      .fn()
+      .mockReturnValue({ getLanguage: jest.fn().mockReturnValue({}) });
+
+    await queryExecution({
+      services,
+      query: { query: 'q', language: 'PPL' } as any,
+      queryString: 'q',
+      updateEditorStateFn,
+      updateResultFn,
+      activeQueryAbortController: controller,
+    });
+
+    expect(updateResultFn).not.toHaveBeenCalled();
+    expect(updateEditorStateFn).toHaveBeenCalledTimes(1);
   });
 });
 
