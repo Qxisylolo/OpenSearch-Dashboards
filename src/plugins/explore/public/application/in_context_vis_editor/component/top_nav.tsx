@@ -111,6 +111,7 @@ export const TopNav = ({ setHeaderActionMenu = () => {}, savedExplore }: TopNavP
       showQueryBar={true}
       showQueryInput={false}
       showFilterBar={false}
+      groupedActionsBeforeDatePicker={true}
     />
   );
 };

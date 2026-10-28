@@ -5,7 +5,7 @@
 
 import { BehaviorSubject, Subscription, combineLatest, Observable, of } from 'rxjs';
 import { distinctUntilChanged, debounceTime, map, filter, switchMap } from 'rxjs/operators';
-import { isEqual, isUndefined, omitBy } from 'lodash';
+import { cloneDeep, isEqual, isUndefined, omitBy } from 'lodash';
 
 import { ExploreServices } from '../../../types';
 import {
@@ -17,24 +17,31 @@ import {
 import { getQueryLabel } from '../../../../../data/common';
 
 import {
+  AggregateStatus,
   QueryRows,
+  RowExecutionState,
+  RowListItem,
+  SeriesResult,
+  computeAggregateStatus,
+  toRowListItem,
+  toSeriesResult,
   UrlMultiEditorState,
   UrlRowEditorState,
   UrlRowEntry,
   getQueryLabelIndex,
-  normalizeUrlEditorState,
-  normalizeUrlQueries,
 } from './utils';
 import { QUERY_BUILDER_QUERY_STATE_KEY, QUERY_EDITOR_STATE_KEY } from '../types';
+import { ContainerState } from './container_state_utils';
 
 import {
+  EditorMode,
   QueryExecutionStatus,
   QueryResultStatus,
 } from '../../../application/utils/state_management/types';
 import { IVariableInterpolationService } from '../../../../../dashboard/public';
 import { PromQLQueryOptions } from '../../../../../query_enhancements/common';
-import { getServices as getExploreServices } from '../../../services/services';
-import { getSourceTypeRegistry } from '../../../services/source_type_registry';
+import { shouldSkipQueryExecution } from '../../../application/utils/state_management/actions/query_actions';
+import { showSkippedQueriesWarning } from '../query_builder/utils';
 
 export interface PerQueryResult {
   refId: string;
@@ -73,7 +80,10 @@ export class MultiQueryBuilder {
   public multiQueryEditorState$ = new BehaviorSubject<MultiQueryEditorState>(
     initialMultiQueryEditorState
   );
-  public multiQueryResults$ = new BehaviorSubject<MultiQueryResult>({});
+
+  // isExecuting indicates an executeAll runs, and vis will wait for the results
+  public isExecuting$ = new BehaviorSubject<boolean>(false);
+  private executionRun = 0;
 
   public variableNames$ = new BehaviorSubject<string[]>([]);
   private interpolationService?: IVariableInterpolationService;
@@ -81,64 +91,44 @@ export class MultiQueryBuilder {
   private getServices: () => ExploreServices;
   private refIdCounter = 0;
   private subscriptions = Array<Subscription>();
-  private isInitialized = false;
 
-  // Pending row promises after init(), so MultiQueryBuilder.init() can wait for rows to be finished before callers inspect or execute them.
-  private rowPromises = new WeakMap<QueryBuilder, Promise<void>>();
-  // Bumped by reset(), so an init() still awaiting from the previous lifecycle can tell it's stale.
-  private lifecycleId = 0;
+  // Rows are built in load(); until then there are none (the page renders nothing before load).
+  private loaded = false;
 
   constructor(getServices: () => ExploreServices) {
     this.getServices = getServices;
   }
 
-  async init(options?: { savedQueries?: QueryState[] }): Promise<void> {
-    // TODO later(subsribe url) Effects can re-run init; subscriptions must only be set up once per lifecycle.
-    // TODO URL sync is one-way (state -> URL). An external URL change (back/forward POP, or a PUSH
-    // into the app with a different `_mq` / `_eq`) is not picked up because the app stays mounted.
-    // Rather than every builder listening to the URL, remount the editor on such a change (bump the
-    // page's key from scopedHistory.listen) so reset() + the first-load init re-read it. Our own
-    // writes use `replace: true`, so REPLACE can be ignored. `isInitialized` can only go once the
-    // page's init effect runs exactly once.
-    if (this.isInitialized) {
+  // TODO URL sync is one-way (state -> URL). An external URL change (back/forward POP, or a PUSH
+  // into the app with a different `_eq`) is not picked up because the app stays mounted. Rather
+  // than every builder listening to the URL, remount the editor on such a change (bump the
+  // MultiQueryBuilderProvider's key from scopedHistory.listen), so a new instance reads the URL.
+  // Our own writes use `replace: true`, so REPLACE can be ignored.
+
+  isLoaded(): boolean {
+    return this.loaded;
+  }
+
+  /**
+   * Load the container from its resolved states: builds every row with its
+   * final state, restores the editor state, then starts the global and URL syncs.
+   */
+  load(session: ContainerState): void {
+    if (this.loaded) {
       return;
     }
-    const lifecycleId = this.lifecycleId;
 
-    const { queries: queriesFromUrl, editorState: editorStateFromUrl } = this.readUrlState();
-
-    if (queriesFromUrl.length > 0) {
-      this.loadQueryRows(queriesFromUrl, editorStateFromUrl);
-    } else if (options?.savedQueries?.length) {
-      this.loadSavedQueries(options.savedQueries, editorStateFromUrl);
-    } else {
-      this.ensureRow();
-      // `_e` alone (no queries): restore the rows' visibility and the container state.
-      const editorStateByRefId = new Map(editorStateFromUrl.rows);
-      this.getAllRows().forEach((row) =>
-        this.startRowInit(row, { savedEditorState: editorStateByRefId.get(row.refId) })
-      );
-      this.applyMultiEditorState(editorStateFromUrl);
-    }
+    this.loadQueryRows(session.queries, session.editorState);
 
     this.setupGlobalDataRangeSync();
-    // TODO delete later
-    this.setupSelectedRowQuerySync();
     this.setupTimefilterToDateRangeSync();
-
-    // Wait for all rows finish initialization by waitForDatasetReady
-    await this.waitForAllRowsInitialized();
-    // reset() ran while we were waiting (e.g. the page unmounted): don't attach the URL sync to
-    // the next lifecycle.
-    if (lifecycleId !== this.lifecycleId) {
-      return;
-    }
     this.startUrlSync();
-    this.setIsInitialized(true);
+    this.loaded = true;
   }
 
   /* --- Subscription ---
-   * - setupGlobalDataRangeSync(): sync current time filter to global.
+   * - setupGlobalDataRangeSync(): sync current time filter to global time filter.
+   * - setupTimefilterToDateRangeSync(): Sync global time filter to shared editor states
    * - startUrlSync(): one-way, state -> URL, debounced. dateRange is left out: _g (timefilter) owns
    *   it. External URL changes (back/forward) are not read back; remount the editor instead.
    */
@@ -162,30 +152,6 @@ export class MultiQueryBuilder {
     this.subscriptions.push(dataRangeSyncSub);
   }
 
-  // Rows don't write the global query string (they're created with ownsGlobalState: false).
-  // Mirror the SELECTED row into it so global consumers (search context, dataset service,
-  // time picker) keep seeing the query the user is editing.
-
-  // TODO can delete? no global query used
-  private setupSelectedRowQuerySync() {
-    const selectedRowQuerySub = this.getSelectedRow$()
-      .pipe(
-        switchMap((row) => row.queryState$),
-        distinctUntilChanged((prev, curr) => isEqual(prev, curr))
-      )
-      .subscribe((queryState) => {
-        const cleanQuery = getSourceTypeRegistry().isMetricsLanguage(queryState?.language)
-          ? queryState
-          : { ...queryState, queryOptions: undefined };
-        this.getServices().data.query.queryString.setQuery(cleanQuery);
-      });
-
-    this.subscriptions.push(selectedRowQuerySub);
-  }
-
-  // Keep the shared dateRange in step with the global timefilter, which can also change outside
-  // the container (`_g` URL sync, the agent setting a generated time range). isEqual guards
-  // against ping-pong with setupGlobalDataRangeSync.
   private setupTimefilterToDateRangeSync() {
     const timefilter = this.getServices().data?.query?.timefilter?.timefilter;
     if (!timefilter) {
@@ -212,20 +178,6 @@ export class MultiQueryBuilder {
    *   it. External URL changes (back/forward) are not read back; remount the editor instead.
    */
 
-  private readUrlState(): {
-    queries: Array<UrlRowEntry<QueryState>>;
-    editorState: UrlMultiEditorState;
-  } {
-    const urlStateStorage = this.getServices()?.osdUrlStateStorage;
-    if (!urlStateStorage) {
-      return { queries: [], editorState: { rows: [] } };
-    }
-    return {
-      queries: normalizeUrlQueries(urlStateStorage.get(QUERY_BUILDER_QUERY_STATE_KEY)),
-      editorState: normalizeUrlEditorState(urlStateStorage.get(QUERY_EDITOR_STATE_KEY)),
-    };
-  }
-
   private startUrlSync() {
     // Each row's query state and persisted editor state, in row order.
     const rowsUrlState$ = this.queryRows$.pipe(
@@ -247,7 +199,6 @@ export class MultiQueryBuilder {
           : of([])
       )
     );
-    // dateRange is left out: the global timefilter (`_g`) owns it.
     const multiQueryEditorUrlState$ = this.multiQueryEditorState$.pipe(
       map(({ selectedRowRefId, maxDataPoints }) => ({ selectedRowRefId, maxDataPoints })),
       distinctUntilChanged((prev, curr) => isEqual(prev, curr))
@@ -285,22 +236,25 @@ export class MultiQueryBuilder {
   /* --- Row management ---
    * Rows are identified by refId (A, B, ...)
    * - buildRow(): constructs a row without initializing it.
-   * - createRow(): buildRow() + row's init, tracked in rowPromises so init() can wait.
+   * - createRow(): buildRow() + init row.
    * - ensureRow(): a placeholder row (built, not initialized), so hooks have a selected row before init() runs.
    * - addRow(): createRow() + appends to queryRows$; selects it only when it's the first row.
    * - removeRow(): the last row can't be removed; removing the selected row selects the first one.
-   * - loadQueryRows() / loadSavedQueries(): replace all rows (refIds de-duplicated), then restore
-   *   per-row editor state (isHidden) and container editor state (selectedRow, maxDataPoints).
+   * - loadQueryRows() / loadSavedQueries(): replace all rows (refIds de-duplicated), then restore per-row editor state (isHidden) and container editor state (selectedRow, maxDataPoints).
    * - selectRow() / getSelectedRow$(): get selected row
    * - getRow() / getAllRows()
    * - updateQueryRow(): update query state or query editor for a specific row
+   * - duplicateRow(): copies a row right after it under a new refId (A, B, C: copying A gives A, D, B, C).
+   * - reorderRows(): reorders rows, refIds stay as they are.
    */
 
   private buildRow(refId?: string): QueryBuilder {
     const row = new QueryBuilder(
       this.getServices,
       refId ?? this.nextRefId(),
-      () => this.interpolationService
+      () => this.interpolationService,
+      // Only a lone visible row may apply an agent-generated time range (hidden rows don't run).
+      () => this.getAllRows().filter((r) => !r.getQueryEditorState().isHidden).length <= 1
     );
     if (!refId) {
       this.refIdCounter += 1;
@@ -308,25 +262,10 @@ export class MultiQueryBuilder {
     return row;
   }
 
-  private startRowInit(row: QueryBuilder, options?: RowSavedStates) {
-    const initPromise = row.init(options);
-    this.rowPromises.set(row, initPromise);
-    return initPromise;
-  }
-
   private createRow(options?: RowSavedStates & { refId?: string }): QueryBuilder {
     const row = this.buildRow(options?.refId);
-    this.startRowInit(row, options);
+    row.init(options);
     return row;
-  }
-
-  private ensureRow(): void {
-    if (this.queryRows$.getValue().length > 0) {
-      return;
-    }
-    const row = this.buildRow();
-    this.queryRows$.next([row]);
-    this.selectRow(row.refId);
   }
 
   addRow(opts?: RowSavedStates & { refId?: string }): QueryBuilder {
@@ -357,38 +296,76 @@ export class MultiQueryBuilder {
     deletedRow.dispose();
   }
 
-  loadSavedQueries(queries: QueryState[], editorState?: UrlMultiEditorState): void {
-    this.loadQueryRows(
-      queries.map((query, index) => [getQueryLabel(index), query]),
-      editorState
-    );
-  }
+  duplicateRow(refId: string): QueryBuilder | undefined {
+    const target = this.getRow(refId);
+    if (!target) return undefined;
+    // duplicate the query, dataset, language, query options, and hidden state
+    const { editorMode, isHidden, lastExecutedTranslatedQuery } = target.getQueryEditorState();
 
-  loadQueryRows(queries: Array<UrlRowEntry<QueryState>>, editorState?: UrlMultiEditorState): void {
-    this.disposeAllRows();
-    const seen = new Set<string>();
-    const uniqueQueries = queries.filter(([refId]) => {
-      if (seen.has(refId)) return false;
-      seen.add(refId);
-      return true;
+    // Query mode copies from editor because it may hold text that hasn't run yet.
+    // Prompt mode copies from lastExecutedTranslatedQuery
+    const queryText =
+      editorMode === EditorMode.Query
+        ? target.getEditor()?.getValue()
+        : lastExecutedTranslatedQuery;
+
+    const sourceQuery = target.queryState$.getValue();
+    const row = this.createRow({
+      savedQueryState: cloneDeep(
+        queryText === undefined ? sourceQuery : { ...sourceQuery, query: queryText }
+      ),
+      // A copy of a hidden row stays hidden.
+      savedEditorState: { isHidden: !!isHidden },
     });
 
+    const rows = [...this.getAllRows()];
+    rows.splice(rows.indexOf(target) + 1, 0, row);
+    this.queryRows$.next(rows);
+    return row;
+  }
+
+  reorderRows(fromIndex: number, toIndex: number): void {
+    const rows = [...this.getAllRows()];
+    if (
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= rows.length ||
+      toIndex >= rows.length
+    ) {
+      return;
+    }
+    const [moved] = rows.splice(fromIndex, 1);
+    rows.splice(toIndex, 0, moved);
+    this.queryRows$.next(rows);
+  }
+
+  private loadQueryRows(
+    queries: Array<UrlRowEntry<QueryState>>,
+    editorState?: UrlMultiEditorState
+  ): void {
+    // clean rows first
+    this.disposeAllRows();
+
     this.refIdCounter = Math.max(
-      uniqueQueries.length,
-      ...uniqueQueries.map(([refId]) => getQueryLabelIndex(refId) + 1)
+      queries.length,
+      ...queries.map(([refId]) => getQueryLabelIndex(refId) + 1)
     );
 
     const editorStateByRefId = new Map(editorState?.rows ?? []);
-    uniqueQueries.forEach(([refId, savedQueryState]) => {
+
+    // apply editor state for each row
+    queries.forEach(([refId, savedQueryState]) => {
       this.addRow({ refId, savedQueryState, savedEditorState: editorStateByRefId.get(refId) });
     });
 
-    // restore container state
+    // apply global editor state for container
     this.applyMultiEditorState(editorState);
   }
 
-  // Only an existing row can be selected, so selectedRowRefId always names a row.
+  // Only an existing row can be selected
   selectRow(refId: string) {
+    // TODO if select first
     if (!this.getRow(refId)) {
       return;
     }
@@ -396,8 +373,6 @@ export class MultiQueryBuilder {
   }
 
   getSelectedRow$(): Observable<QueryBuilder> {
-    // ensure a first row exists by the time component uses
-    this.ensureRow();
     const selectedRow$ = this.multiQueryEditorState$.pipe(
       map((state) => state.selectedRowRefId),
       distinctUntilChanged()
@@ -411,8 +386,7 @@ export class MultiQueryBuilder {
     );
   }
 
-  getSelectedRow(): QueryBuilder {
-    this.ensureRow();
+  getSelectedRow(): QueryBuilder | undefined {
     const selectedRow = this.multiQueryEditorState$.getValue().selectedRowRefId;
     return (selectedRow ? this.getRow(selectedRow) : undefined) ?? this.getAllRows()[0];
   }
@@ -442,41 +416,44 @@ export class MultiQueryBuilder {
 
   /* --- Execution ---
    * executeAll(): runs every visible (non-hidden) row in parallel; one row failing doesn't stop the others. userInitiated: false runs executeQuery directly.
-   * cancelAll(): aborts every row's in-flight request and resets its result and status.
-   * Each row aborts only its own requests (abort key = refId).
+   * cancelAll(): aborts every row's in-flight request and resets its result and status. Each row aborts only its own requests (abort key = refId).
    */
 
   async executeAll({ userInitiated = true }: { userInitiated?: boolean } = {}): Promise<void> {
-    // const currentRows = this.queryRows$.getValue();
-    // Hidden rows are neither executed nor merged.
+    // get all visible rows
     const currentRows = this.queryRows$
       .getValue()
       .filter((row) => !row.getQueryEditorState().isHidden);
 
-    await Promise.allSettled(
-      currentRows.map(async (row) => {
-        try {
-          // await row.onQueryExecutionSubmit();
-          if (userInitiated) {
-            await row.onQueryExecutionSubmit();
-          } else {
-            await row.executeQuery();
-          }
-        } catch (e) {
-          // skip
-        }
+    // Tell the user which visible rows are skiped.
+    this.warnSkippedRows(currentRows);
 
-        const result = {
-          refId: row.refId,
-          perQueryResult: row.resultState$.getValue(),
-          perQueryStatus: row.queryEditorState$.getValue().queryStatus,
-        };
-        this.updateMultiQueryResults(result);
-      })
-    );
+    // The rows run in parallel，
+    const run = ++this.executionRun;
+    this.isExecuting$.next(true);
+    try {
+      await Promise.allSettled(
+        currentRows.map(async (row) => {
+          try {
+            if (userInitiated) {
+              await row.onQueryExecutionSubmit();
+            } else {
+              await row.executeQuery();
+            }
+          } catch (e) {
+            // skip: the row's own queryStatus records the error
+          }
+        })
+      );
+    } finally {
+      if (run === this.executionRun) {
+        this.isExecuting$.next(false);
+      }
+    }
   }
 
   cancelAll(): void {
+    this.isExecuting$.next(false);
     this.getAllRows().forEach((row) => {
       row.abortActiveQueries();
       row.clearResultState();
@@ -490,6 +467,106 @@ export class MultiQueryBuilder {
         userInitiatedQuery: false,
       });
     });
+  }
+
+  /* --- Results ---
+   * getVisibleRowExecutionStates$(): return each visible row's status and result in row order.
+   * getAggregateStatus$(): runs every visible row in parallel; one row failing doesn't stop the others. userInitiated: false runs executeQuery directly.
+   * getSeriesResult$(): return READY visible rows' results, always in row order. Emits only when the all queries are finished.
+   * getQueryRowItems$() / getQueryRowItems(): every row (hidden ones too) as a list item, in row order.
+   */
+
+  getQueryRowItems$(): Observable<RowListItem[]> {
+    return this.queryRows$.pipe(
+      switchMap((rows) =>
+        rows.length > 0
+          ? combineLatest(
+              rows.map((row) =>
+                row.queryEditorState$.pipe(
+                  map((editorState) => toRowListItem(row.refId, editorState))
+                )
+              )
+            )
+          : of([])
+      ),
+      // Editor-state changes that don't touch these fields (text, dirty flag) emit equal items.
+      distinctUntilChanged((prev, curr) => isEqual(prev, curr))
+    );
+  }
+
+  getQueryRowItems(): RowListItem[] {
+    return this.getAllRows().map((row) => toRowListItem(row.refId, row.getQueryEditorState()));
+  }
+
+  private getVisibleRowExecutionStates$(): Observable<RowExecutionState[]> {
+    return this.queryRows$.pipe(
+      switchMap((rows) =>
+        rows.length > 0
+          ? combineLatest(
+              rows.map((row) =>
+                combineLatest([
+                  // Only what the results depend on: other editor-state changes stop here.
+                  row.queryEditorState$.pipe(
+                    map(({ isHidden, queryStatus }) => ({
+                      isHidden: !!isHidden,
+                      status: queryStatus,
+                    })),
+                    distinctUntilChanged((prev, curr) => isEqual(prev, curr))
+                  ),
+                  row.resultState$,
+                ]).pipe(
+                  // A hidden row doesn't run or count; it's still watched so hiding updates the list.
+                  map(([{ isHidden, status }, result]): RowExecutionState | undefined =>
+                    isHidden ? undefined : { refId: row.refId, status, result }
+                  )
+                )
+              )
+            )
+          : of([])
+      ),
+      map((states) => states.filter((state): state is RowExecutionState => !!state))
+    );
+  }
+
+  getAggregateStatus$(): Observable<AggregateStatus> {
+    return combineLatest([this.getVisibleRowExecutionStates$(), this.isExecuting$]).pipe(
+      map(([states, isExecuting]) => computeAggregateStatus(states, isExecuting)),
+      distinctUntilChanged((prev, curr) => isEqual(prev, curr))
+    );
+  }
+
+  getSeriesResult$(): Observable<SeriesResult[]> {
+    return combineLatest([this.getVisibleRowExecutionStates$(), this.isExecuting$]).pipe(
+      filter(
+        ([states, isExecuting]) =>
+          !isExecuting &&
+          !states.some((state) => state.status.status === QueryExecutionStatus.LOADING)
+      ),
+      map(([states]) =>
+        states.filter(
+          (state) => state.status.status === QueryExecutionStatus.READY && !!state.result
+        )
+      ),
+      // Adding a new row may re-emit again, add deduplication
+      distinctUntilChanged(
+        (prev, curr) =>
+          prev.length === curr.length &&
+          prev.every((p, i) => p.refId === curr[i].refId && p.result === curr[i].result)
+      ),
+      map((states) => states.map(toSeriesResult))
+    );
+  }
+
+  /**
+   * One visible row's current result as a series, read from the row itself (no stored copy).
+   * Undefined when the row is gone, hidden, or has no result.
+   */
+  getSeriesResult(refId: string): SeriesResult | undefined {
+    const row = this.getRow(refId);
+    if (!row || row.getQueryEditorState().isHidden) return undefined;
+    const result = row.resultState$.getValue();
+    if (!result) return undefined;
+    return toSeriesResult({ refId, status: row.getQueryEditorState().queryStatus, result });
   }
 
   /* --- Variables ---
@@ -509,15 +586,15 @@ export class MultiQueryBuilder {
     return this.variableNames$.value;
   }
 
-  /* --- Helpers ---
-   */
+  /* --- Helpers --- */
 
-  // Restores the container-level editor state; a selectedRow that matches no row is ignored.
+  // Restores the container-level editor state.
   private applyMultiEditorState(editorState?: UrlMultiEditorState): void {
     if (editorState?.maxDataPoints !== undefined) {
       this.updateMultiQueryEditorState({ maxDataPoints: editorState.maxDataPoints });
     }
-    if (editorState?.selectedRowRefId && this.getRow(editorState.selectedRowRefId)) {
+
+    if (editorState?.selectedRowRefId) {
       this.selectRow(editorState.selectedRowRefId);
     }
   }
@@ -530,14 +607,6 @@ export class MultiQueryBuilder {
     });
   }
 
-  updateMultiQueryResults(result: PerQueryResult) {
-    const newResults = {
-      ...this.multiQueryResults$.getValue(),
-      [result.refId]: result,
-    };
-    this.multiQueryResults$.next(newResults);
-  }
-
   private nextRefId(): string {
     return getQueryLabel(this.refIdCounter);
   }
@@ -545,8 +614,28 @@ export class MultiQueryBuilder {
   private disposeAllRows(): void {
     this.queryRows$.getValue().forEach((r) => r.dispose());
     this.queryRows$.next([]);
-    // No rows left to point at; the next addRow() selects the first new row.
     this.updateMultiQueryEditorState({ selectedRowRefId: undefined });
+  }
+
+  // Some rows don't have dataset or prompt input, skip them and show warnings
+  private warnSkippedRows(rows: QueryBuilder[]): void {
+    const noDataset: string[] = [];
+    const emptyQuery: string[] = [];
+
+    rows.forEach((row) => {
+      const query = row.queryState$.getValue();
+      if (!query.dataset) {
+        noDataset.push(row.refId);
+      } else if (
+        // In Prompt mode, an empty prompt is not expected.
+        row.getQueryEditorState().editorMode !== EditorMode.Prompt &&
+        shouldSkipQueryExecution(query)
+      ) {
+        emptyQuery.push(row.refId);
+      }
+    });
+    const toasts = this.getServices().notifications?.toasts;
+    if (toasts) showSkippedQueriesWarning(toasts, { noDataset, emptyQuery });
   }
 
   // Whether any visible row's dataset is time based: decides if the shared date picker shows.
@@ -570,10 +659,7 @@ export class MultiQueryBuilder {
     );
   }
 
-  async waitForAllRowsInitialized(): Promise<void> {
-    await Promise.allSettled(this.getAllRows().map((row) => this.rowPromises.get(row)));
-  }
-
+  // Ends the session; safe to call twice. The instance is not reusable afterwards.
   dispose(): void {
     // Container-level syncs (timefilter, URL, selected-row query) must stop with the container.
     this.subscriptions.forEach((sub) => sub.unsubscribe());
@@ -581,36 +667,7 @@ export class MultiQueryBuilder {
     this.disposeAllRows();
     this.queryRows$.complete();
     this.multiQueryEditorState$.complete();
-    this.multiQueryResults$.complete();
+    this.isExecuting$.complete();
     this.variableNames$.complete();
   }
-
-  setIsInitialized(isInitialized: boolean) {
-    this.isInitialized = isInitialized;
-  }
-
-  reset(): void {
-    this.dispose();
-    this.queryRows$ = new BehaviorSubject<QueryRows>([]);
-    this.multiQueryEditorState$ = new BehaviorSubject<MultiQueryEditorState>(
-      initialMultiQueryEditorState
-    );
-    this.multiQueryResults$ = new BehaviorSubject<MultiQueryResult>({});
-    this.variableNames$ = new BehaviorSubject<string[]>([]);
-    this.refIdCounter = 0;
-    this.setIsInitialized(false);
-    this.interpolationService = undefined;
-    this.lifecycleId += 1;
-  }
 }
-
-// // Singleton instance
-// let multiQueryBuilderInstance: MultiQueryBuilder | null = null;
-
-// export function getMultiQueryBuilder(): MultiQueryBuilder {
-//   if (!multiQueryBuilderInstance) {
-//     multiQueryBuilderInstance = new MultiQueryBuilder(() => getExploreServices());
-//   }
-
-//   return multiQueryBuilderInstance;
-// }

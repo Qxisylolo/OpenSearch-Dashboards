@@ -16,8 +16,6 @@ export const useQueryPanelEditorProps = (): QueryEditorProps & { editorKey: numb
   const { services } = useOpenSearchDashboards<ExploreServices>();
   const { queryBuilder, queryState, queryEditorState, container } = useQueryBuilderState();
   const { switchEditorMode } = useEditorOperations();
-  const isPromptMode = queryEditorState.editorMode === EditorMode.Prompt;
-
   const previousEditorModeRef = useRef(queryEditorState.editorMode);
 
   // use this editorKey to force monaco editor to mount/unmount only for Prompt -> Query
@@ -36,7 +34,7 @@ export const useQueryPanelEditorProps = (): QueryEditorProps & { editorKey: numb
 
   const onRun = useCallback(
     (queryString: string) => {
-      if (!isPromptMode) {
+      if (queryBuilder.getQueryEditorState().editorMode !== EditorMode.Prompt) {
         queryBuilder.updateQueryState({ query: queryString });
       }
       container.executeAll().catch((error) => {
@@ -46,7 +44,7 @@ export const useQueryPanelEditorProps = (): QueryEditorProps & { editorKey: numb
         });
       });
     },
-    [isPromptMode, queryBuilder, container, services.notifications]
+    [queryBuilder, container, services.notifications]
   );
 
   const getEditorContainerHeight = useCallback((domNode: HTMLElement | null) => {

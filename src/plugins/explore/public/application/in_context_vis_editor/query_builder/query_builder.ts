@@ -33,7 +33,6 @@ import {
   queryExecution,
   showPromptModeNotAvailableWarning,
   showMissingPromptWarning,
-  showMissingDatasetWarning,
   handleAgentError,
   withLanguageQueryOptions,
 } from './utils';
@@ -122,17 +121,19 @@ export class QueryBuilder {
   private getServices: () => ExploreServices;
   // Shared by every row and owned by the container
   private readonly getInterpolationService: () => IVariableInterpolationService | undefined;
+
   public lastExecutedInterpolatedQuery?: string;
 
   public refId: string;
   // The query state seen by the previous query sync, to detect dataset/language changes.
   private prevQueryState?: QueryState;
-  private readonly abortControllers = new Map<string, AbortController>();
+  private activeAbortController?: AbortController;
 
   constructor(
     getServices: () => ExploreServices,
     refId = 'A',
-    getInterpolationService: () => IVariableInterpolationService | undefined = () => undefined
+    getInterpolationService: () => IVariableInterpolationService | undefined = () => undefined,
+    canApplyGeneratedTimeRange: () => boolean = () => true
   ) {
     this.getServices = getServices;
     this.refId = refId;
@@ -315,10 +316,10 @@ export class QueryBuilder {
     // Use this row's own query: the global one belongs to the selected row only.
     const currentQuery = this.queryState$.getValue();
     if (!currentQuery.dataset) {
-      showMissingDatasetWarning(this.getServices().notifications.toasts);
       return;
     }
 
+    const abortController = this.createActiveAbortController();
     try {
       this.updateQueryEditorState({ promptToQueryIsLoading: true });
       if (currentQuery.dataset.type === 'PROMETHEUS') {
@@ -329,6 +330,7 @@ export class QueryBuilder {
           dataSourceId: currentQuery.dataset.dataSource?.id,
           dataSourceMeta: currentQuery.dataset.dataSource?.meta as Record<string, unknown>,
         });
+        if (abortController.signal.aborted) return;
 
         const queryString = result.query;
 
@@ -339,16 +341,7 @@ export class QueryBuilder {
           lastExecutedTranslatedQuery: queryString,
         });
 
-        await queryExecution({
-          services: this.getServices(),
-          query: this.queryState$.getValue(),
-          queryString,
-          updateEditorStateFn: this.updateQueryEditorState.bind(this),
-          updateResultFn: this.updateQueryResultForEditor.bind(this),
-          activeQueryAbortControllers: this.abortControllers,
-          // one request per row; a new run cancels the previous one.
-          abortKey: this.refId,
-        });
+        await this.runQuery(queryString, abortController);
 
         return;
       }
@@ -366,14 +359,26 @@ export class QueryBuilder {
         '/api/enhancements/assist/generate',
         {
           body: JSON.stringify(params),
+          signal: abortController.signal,
         }
       );
+      if (abortController.signal.aborted) return;
+      // TODO handle time range, should single query update container tine range??
+      // The time range is shared: with several rows running together, the other rows already
+      // ran with the current one, so applying it would leave them out of step.
       if (response.timeRange) {
         const convertedTimeRange = {
           from: moment(response.timeRange.from, 'YYYY-MM-DD HH:mm:ss').toISOString(),
           to: moment(response.timeRange.to, 'YYYY-MM-DD HH:mm:ss').toISOString(),
         };
         this.getServices().data.query.timefilter.timefilter.setTime(convertedTimeRange);
+        //  else {
+        //   showGeneratedTimeRangeIgnoredWarning(
+        //     this.getServices().notifications.toasts,
+        //     this.refId,
+        //     response.timeRange
+        //   );
+        // }
       }
       const queryString = response.query;
 
@@ -383,19 +388,12 @@ export class QueryBuilder {
         queryStatus: initialQueryStatus,
         lastExecutedTranslatedQuery: queryString,
       });
-
-      await queryExecution({
-        services: this.getServices(),
-        query: this.queryState$.getValue(),
-        queryString,
-        updateEditorStateFn: this.updateQueryEditorState.bind(this),
-        updateResultFn: this.updateQueryResultForEditor.bind(this),
-        activeQueryAbortControllers: this.abortControllers,
-        abortKey: this.refId,
-      });
+      await this.runQuery(queryString, abortController);
     } catch (error) {
+      if (abortController.signal.aborted) return;
       handleAgentError(this.getServices().notifications.toasts, error);
     } finally {
+      this.clearActiveAbortController(abortController);
       this.updateQueryEditorState({ promptToQueryIsLoading: false });
     }
   }
@@ -460,44 +458,63 @@ export class QueryBuilder {
   }
 
   async executeQuery() {
-    this.clearResultState();
+    const abortController = this.createActiveAbortController();
+    try {
+      this.clearResultState();
 
-    const datasetView = await this.waitForDatasetReady();
+      const datasetView = await this.waitForDatasetReady();
+      if (abortController.signal.aborted) return;
+      if (datasetView.error) return;
+      this.updateQueryEditorState({
+        queryStatus: initialQueryStatus,
+      });
 
-    if (datasetView.error) return;
-    this.updateQueryEditorState({
-      queryStatus: initialQueryStatus,
-    });
+      // No dataset (e.g. a restored row without one): nothing to run, the row doesn't take part.
+      if (!datasetView.dataView) {
+        return;
+      }
+      const currentQuery = this.queryState$.value;
+      // prepare querystring for execution, add clause when query is '' for PPL
+      let queryString = this.prepareQueryStringToCacheKey(currentQuery);
 
-    // No dataset (e.g. a restored row without one): nothing to run, the row doesn't take part.
-    if (!datasetView.dataView) {
-      return;
+      const interpolationService = this.getInterpolationService();
+      if (interpolationService && interpolationService.hasVariables(queryString)) {
+        queryString = interpolationService.interpolate(queryString, currentQuery.language);
+      }
+
+      this.lastExecutedInterpolatedQuery = queryString;
+      await this.runQuery(queryString, abortController);
+    } finally {
+      this.clearActiveAbortController(abortController);
     }
-    const currentQuery = this.queryState$.value;
-    // prepare querystring for execution, add clause when query is '' for PPL
-    let queryString = this.prepareQueryStringToCacheKey(currentQuery);
+  }
 
-    const interpolationService = this.getInterpolationService();
-    if (interpolationService && interpolationService.hasVariables(queryString)) {
-      queryString = interpolationService.interpolate(queryString, currentQuery.language);
-    }
-
-    this.lastExecutedInterpolatedQuery = queryString;
-
-    await queryExecution({
+  private runQuery(queryString: string, abortController: AbortController) {
+    return queryExecution({
       services: this.getServices(),
       query: this.queryState$.getValue(),
       queryString,
       updateEditorStateFn: this.updateQueryEditorState.bind(this),
       updateResultFn: this.updateQueryResultForEditor.bind(this),
-      activeQueryAbortControllers: this.abortControllers,
-      abortKey: this.refId,
+      activeQueryAbortController: abortController,
     });
   }
 
   abortActiveQueries() {
-    this.abortControllers.forEach((controller) => controller.abort());
-    this.abortControllers.clear();
+    this.activeAbortController?.abort();
+    this.activeAbortController = undefined;
+  }
+
+  private createActiveAbortController() {
+    this.activeAbortController?.abort();
+    this.activeAbortController = new AbortController();
+    return this.activeAbortController;
+  }
+
+  private clearActiveAbortController(abortController: AbortController) {
+    if (this.activeAbortController === abortController) {
+      this.activeAbortController = undefined;
+    }
   }
 
   private prepareQueryStringToCacheKey(query: Query) {

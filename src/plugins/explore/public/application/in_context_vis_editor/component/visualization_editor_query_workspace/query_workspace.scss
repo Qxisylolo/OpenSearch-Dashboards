@@ -166,3 +166,11 @@
     pointer-events: auto;
   }
 }
+
+// Error callout above the selected query row's editor.
+.queryWorkspaceQueryIssues {
+  &__details {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+}

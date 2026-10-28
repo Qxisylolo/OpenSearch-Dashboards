@@ -11,10 +11,54 @@ export interface QueryItemActionsProps {
   item: SectionItem;
   canRemove: boolean;
   onRemove?: (refId: string) => void;
+  onToggleHide?: (refId: string) => void;
+  onDuplicate?: (refId: string) => void;
 }
 
-export const QueryItemActions = ({ item, canRemove, onRemove }: QueryItemActionsProps) => (
+// export const QueryItemActions = ({ item, canRemove, onRemove }: QueryItemActionsProps) => (
+export const QueryItemActions = ({
+  item,
+  canRemove,
+  onRemove,
+  onToggleHide,
+  onDuplicate,
+}: QueryItemActionsProps) => (
   <EuiFlexGroup gutterSize="xs" alignItems="center" responsive={false}>
+    {onToggleHide && (
+      <EuiFlexItem grow={false}>
+        <EuiButtonIcon
+          iconType={item.isHidden ? 'eyeClosed' : 'eye'}
+          color="text"
+          aria-label={
+            item.isHidden
+              ? i18n.translate('explore.queryWorkspace.showQueryAriaLabel', {
+                  defaultMessage: 'Show query {label}',
+                  values: { label: item.label },
+                })
+              : i18n.translate('explore.queryWorkspace.hideQueryAriaLabel', {
+                  defaultMessage: 'Hide query {label}',
+                  values: { label: item.label },
+                })
+          }
+          onClick={() => onToggleHide(item.id)}
+          data-test-subj={`queryHideButton-${item.id}`}
+        />
+      </EuiFlexItem>
+    )}
+    {onDuplicate && (
+      <EuiFlexItem grow={false}>
+        <EuiButtonIcon
+          iconType="copy"
+          color="text"
+          aria-label={i18n.translate('explore.queryWorkspace.duplicateQueryAriaLabel', {
+            defaultMessage: 'Duplicate query {label}',
+            values: { label: item.label },
+          })}
+          onClick={() => onDuplicate(item.id)}
+          data-test-subj={`queryDuplicateButton-${item.id}`}
+        />
+      </EuiFlexItem>
+    )}
     <EuiFlexItem grow={false}>
       <EuiButtonIcon
         iconType="trash"
