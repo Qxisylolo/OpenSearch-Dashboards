@@ -14,7 +14,7 @@ import {
   QueryResultState,
   QueryEditorState,
 } from '../query_builder/query_builder';
-import { getQueryLabel } from '../../../../../data/common';
+import { getQueryLabel, splitMultiQueries } from '../../../../../data/common';
 
 import {
   AggregateStatus,
@@ -246,18 +246,22 @@ export class MultiQueryBuilder {
    * - updateQueryRow(): update query state or query editor for a specific row
    * - duplicateRow(): copies a row right after it under a new refId (A, B, C: copying A gives A, D, B, C).
    * - reorderRows(): reorders rows, refIds stay as they are.
+   * - splitRow(): splits a saved multi-lines PromQL query into one row each.
    */
 
   private buildRow(refId?: string): QueryBuilder {
     const row = new QueryBuilder(
       this.getServices,
       refId ?? this.nextRefId(),
-      () => this.interpolationService,
-      // Only a lone visible row may apply an agent-generated time range (hidden rows don't run).
-      () => this.getAllRows().filter((r) => !r.getQueryEditorState().isHidden).length <= 1
+      () => this.interpolationService
+      // // Only a lone visible row may apply an agent-generated time range (hidden rows don't run).
+      // () => this.getAllRows().filter((r) => !r.getQueryEditorState().isHidden).length <= 1
     );
     if (!refId) {
       this.refIdCounter += 1;
+    } else {
+      // A given refId doesn't come from the counter; keep later rows from reusing it.
+      this.refIdCounter = Math.max(this.refIdCounter, getQueryLabelIndex(refId) + 1);
     }
     return row;
   }
@@ -322,6 +326,43 @@ export class MultiQueryBuilder {
     rows.splice(rows.indexOf(target) + 1, 0, row);
     this.queryRows$.next(rows);
     return row;
+  }
+
+  splitRow(refId: string): QueryBuilder[] {
+    const source = this.getRow(refId);
+    if (!source) return [];
+    const sourceQuery = source.queryState$.getValue();
+    const parts = splitMultiQueries(sourceQuery.query);
+    if (parts.length <= 1) return [];
+    const { isHidden } = source.getQueryEditorState();
+    const perQueryOptions = sourceQuery.queryOptions?.perQueryOptions;
+    const taken = new Set(this.getAllRows().map((row) => row.refId));
+    const created = parts.map((part, index) => {
+      //   The first keeps the row's refId; the others try to use the label the source query gave them (B in `Value #B` / `B: <series>`)
+      const partRefId = index === 0 ? refId : taken.has(part.label) ? undefined : part.label;
+      const row = this.createRow({
+        refId: partRefId,
+        savedQueryState: cloneDeep({
+          // Each keeps the row's dataset, options (with its own perQueryOptions entry) and hidden flag.
+          ...sourceQuery,
+          query: part.query,
+          queryOptions: {
+            ...sourceQuery.queryOptions,
+            perQueryOptions: perQueryOptions?.[index] ? [perQueryOptions[index]] : undefined,
+          },
+        }),
+        savedEditorState: { isHidden: !!isHidden },
+      });
+      taken.add(row.refId);
+      return row;
+    });
+
+    const rows = [...this.getAllRows()];
+    rows.splice(rows.indexOf(source), 1, ...created);
+    this.queryRows$.next(rows);
+    // distroy source query
+    source.dispose();
+    return created;
   }
 
   reorderRows(fromIndex: number, toIndex: number): void {

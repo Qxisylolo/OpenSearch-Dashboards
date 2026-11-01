@@ -15,6 +15,9 @@ import { useSavedExplore } from '../../utils/hooks/use_saved_explore';
 import { useOpenSearchDashboards } from '../../../../../opensearch_dashboards_react/public';
 import { ChartConfig } from '../../../components/visualizations/visualization_builder.types';
 
+// Panel-level query options read when saving.
+const mockContainer = { multiQueryEditorState$: new BehaviorSubject({ maxDataPoints: undefined }) };
+
 jest.mock('../hooks/use_query_builder_state', () => ({
   useQueryBuilderState: jest.fn(),
 }));
@@ -139,6 +142,7 @@ beforeEach(() => {
     },
     datasetView: { dataView: undefined },
     queryBuilder: buildQueryBuilder(),
+    container: mockContainer,
   });
   (useCurrentExploreId as jest.Mock).mockReturnValue(undefined);
   (useSavedExplore as jest.Mock).mockReturnValue({ savedExplore: { id: undefined } });
@@ -233,6 +237,7 @@ describe('SaveVisButton', () => {
       },
       datasetView: { dataView: undefined },
       queryBuilder: buildQueryBuilder(),
+      container: mockContainer,
     });
 
     render(<SaveVisButton />);

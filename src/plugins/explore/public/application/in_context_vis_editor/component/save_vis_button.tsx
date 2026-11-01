@@ -46,7 +46,8 @@ const saveButtonText = i18n.translate('explore.topNav.saveVisButton.save', {
 });
 
 export const SaveVisButton = () => {
-  const { queryBuilder, queryEditorState, datasetView, resultState } = useQueryBuilderState();
+  const { queryBuilder, queryEditorState, datasetView, resultState, container } =
+    useQueryBuilderState();
   const { visualizationBuilderForEditor: visualizationBuilder } = useVisualizationBuilder();
   const visConfig = useObservable(visualizationBuilder.visConfig$);
   const transformationService = visualizationBuilder.getTransformationService();
@@ -170,11 +171,16 @@ export const SaveVisButton = () => {
       const searchSourceInstance = savedExploreToSave.searchSourceFields;
 
       if (searchSourceInstance) {
-        // searchSourceInstance.query = searchContext.query as Query;
-        // The selected row's query (one row is saved until saved objects hold every row).
-        searchSourceInstance.query = withLanguageQueryOptions(
-          queryBuilder.queryState$.getValue()
-        ) as Query;
+        // Max data points is panel-level now; save it on the query (where it used to live) so the
+        // saved object keeps it until saved objects hold the panel state (P4).
+        const selectedQuery = queryBuilder.queryState$.getValue();
+        searchSourceInstance.query = withLanguageQueryOptions({
+          ...selectedQuery,
+          queryOptions: {
+            ...selectedQuery.queryOptions,
+            maxDataPoints: container.multiQueryEditorState$.getValue().maxDataPoints,
+          },
+        }) as Query;
         if (isPromptMode) {
           // for prompt mode, store previous generated query string
           searchSourceInstance.query = {
@@ -220,6 +226,7 @@ export const SaveVisButton = () => {
       // searchContext.query,
       // searchContext.filters,
       queryBuilder,
+      container,
       services.data.query.filterManager,
       toastNotifications,
       isPromptMode,

@@ -44,11 +44,25 @@
     max-width: 360px;
   }
 
+  &__body {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
   &__content {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     padding: $euiSizeS;
+  }
+
+  &__footer {
+    flex: 0 0 auto;
+    border-top: $euiBorderThin;
+    padding: $euiSizeXS $euiSizeS;
   }
 }
 
@@ -172,5 +186,30 @@
   &__details {
     white-space: pre-wrap;
     word-break: break-word;
+  }
+}
+
+// Query options: a bar under the detail panel; opening it covers the panel content.
+.queryWorkspaceQueryOptions {
+  &__overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+  }
+
+  &__form {
+    width: 360px;
+    max-width: 100%;
+    padding: $euiSizeM;
+    background: $euiColorEmptyShade;
+    border-right: $euiBorderThin;
+    overflow-y: auto;
+  }
+
+  &__backdrop {
+    flex: 1 1 auto;
+    background: transparentize($euiColorEmptyShade, 0.3);
+    backdrop-filter: blur(2px);
   }
 }

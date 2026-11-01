@@ -26,6 +26,7 @@ import {
 } from '../../../../components/data_transformations';
 import { TransformationAddButton } from './add_transformation_button';
 import { QueryRowIssues } from './query_row_issues';
+import { QueryOptionsBar, QueryOptionsOverlay } from './query_options';
 import './query_workspace.scss';
 
 export interface QueryWorkspaceProps {
@@ -59,6 +60,12 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
   // Only a transformation selection is kept here; the query selection is the container's
   // selected row (which the editor and widgets follow), so the two can't disagree.
   const [selectedTransformationId, setSelectedTransformationId] = useState<string>();
+
+  const [isQueryOptionsOpen, setIsQueryOptionsOpen] = useState(false);
+  const { maxDataPoints } = useObservable(
+    container.multiQueryEditorState$,
+    container.multiQueryEditorState$.getValue()
+  );
 
   const selectQueryRow = useCallback(
     (refId: string) => {
@@ -277,8 +284,8 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
         {(EuiResizablePanel, EuiResizableButton) => (
           <>
             <EuiResizablePanel
-              initialSize={30}
-              minSize="20%"
+              initialSize={20}
+              minSize="10%"
               paddingSize="s"
               // OUI strips borders unless color is plain.
               color="plain"
@@ -301,7 +308,7 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
             <EuiResizableButton />
 
             <EuiResizablePanel
-              initialSize={70}
+              initialSize={80}
               minSize="50%"
               paddingSize="none"
               color="plain"
@@ -316,6 +323,22 @@ export const QueryWorkspace = ({ transformServices }: QueryWorkspaceProps) => {
                 actions={activeItemActions}
                 headerContent={sectionPanelMeta?.headerContent}
                 activeType={active.currentActive}
+                footer={
+                  <QueryOptionsBar
+                    isOpen={isQueryOptionsOpen}
+                    maxDataPoints={maxDataPoints}
+                    onToggle={() => setIsQueryOptionsOpen((open) => !open)}
+                  />
+                }
+                overlay={
+                  isQueryOptionsOpen && (
+                    <QueryOptionsOverlay
+                      maxDataPoints={maxDataPoints}
+                      onMaxDataPointsChange={(next) => container.setMaxDataPoints(next)}
+                      onClose={() => setIsQueryOptionsOpen(false)}
+                    />
+                  )
+                }
               >
                 {renderDetail()}
               </SectionPanel>

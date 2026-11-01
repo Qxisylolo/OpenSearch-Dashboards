@@ -37,6 +37,12 @@ import {
   withLanguageQueryOptions,
 } from './utils';
 import { EXPLORE_DEFAULT_LANGUAGE } from '../../../../common';
+import { getSourceTypeRegistry } from '../../../services/source_type_registry';
+
+// Query options shared by every row (the panel's Query options), applied at execution time.
+export interface SharedQueryOptions {
+  maxDataPoints?: number;
+}
 
 export enum SupportLanguageType {
   ppl = 'PPL',
@@ -129,15 +135,19 @@ export class QueryBuilder {
   private prevQueryState?: QueryState;
   private activeAbortController?: AbortController;
 
+  // Owned by the container; read at execution time so a change applies on the next run.
+  private readonly getSharedQueryOptions: () => SharedQueryOptions;
+
   constructor(
     getServices: () => ExploreServices,
     refId = 'A',
     getInterpolationService: () => IVariableInterpolationService | undefined = () => undefined,
-    canApplyGeneratedTimeRange: () => boolean = () => true
+    getSharedQueryOptions: () => SharedQueryOptions = () => ({})
   ) {
     this.getServices = getServices;
     this.refId = refId;
     this.getInterpolationService = getInterpolationService;
+    this.getSharedQueryOptions = getSharedQueryOptions;
   }
 
   // Initialize row with given and merged state
@@ -447,7 +457,6 @@ export class QueryBuilder {
       queryStatus: {
         status: QueryExecutionStatus.ERROR,
         error: {
-          // TODO decide if deleted
           statusCode: 0,
           error: DATASET_LOAD_ERROR,
           message: { details: message, reason: DATASET_LOAD_ERROR },
@@ -492,12 +501,19 @@ export class QueryBuilder {
   private runQuery(queryString: string, abortController: AbortController) {
     return queryExecution({
       services: this.getServices(),
-      query: this.queryState$.getValue(),
+      query: this.withSharedQueryOptions(this.queryState$.getValue()),
       queryString,
       updateEditorStateFn: this.updateQueryEditorState.bind(this),
       updateResultFn: this.updateQueryResultForEditor.bind(this),
       activeQueryAbortController: abortController,
     });
+  }
+
+  // A metrics row runs with the panel's max data points (undefined = auto) instead of its own.
+  private withSharedQueryOptions(query: QueryState): QueryState {
+    if (!getSourceTypeRegistry().isMetricsLanguage(query.language)) return query;
+    const { maxDataPoints } = this.getSharedQueryOptions();
+    return { ...query, queryOptions: { ...query.queryOptions, maxDataPoints } };
   }
 
   abortActiveQueries() {

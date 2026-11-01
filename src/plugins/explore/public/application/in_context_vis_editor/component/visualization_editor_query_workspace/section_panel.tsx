@@ -14,6 +14,8 @@ export interface SectionPanelProps {
   headerContent?: ReactNode;
   children: ReactNode;
   activeType?: string;
+  footer?: ReactNode;
+  overlay?: ReactNode;
 }
 
 export const SectionPanel = ({
@@ -24,6 +26,8 @@ export const SectionPanel = ({
   headerContent,
   children,
   activeType,
+  footer,
+  overlay,
 }: SectionPanelProps) => {
   return (
     <EuiPanel
@@ -82,7 +86,15 @@ export const SectionPanel = ({
           </EuiFlexGroup>
         </div>
       )}
-      <div className="queryWorkspaceDetail__content">{children}</div>
+      <div className="queryWorkspaceDetail__body">
+        <div className="queryWorkspaceDetail__content">{children}</div>
+        {overlay}
+      </div>
+      {footer && (
+        <div className="queryWorkspaceDetail__footer" data-test-subj="sectionPanelFooter">
+          {footer}
+        </div>
+      )}
     </EuiPanel>
   );
 };

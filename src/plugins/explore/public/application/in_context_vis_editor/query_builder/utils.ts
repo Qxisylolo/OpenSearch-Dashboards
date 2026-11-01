@@ -270,35 +270,50 @@ export const verifyQueryAndDataset = async (
 //   }
 // };
 
+/**
+ * The query a row starts with for a language on a dataset, as the query panel's language switch
+ * does: PPL starts empty (its `source =` clause is added on execution); any other language,
+ * including a registered source's, takes the language's own initial query (e.g. SQL's
+ * `SELECT * FROM ...`, PromQL's empty one) through the data plugin.
+ */
 export const getInitialQueryString = (
   queryString: QueryStringContract,
   dataset: Dataset | undefined,
   language: string
-) =>
-  language === SupportLanguageType.sql && dataset
-    ? queryString.getInitialQueryByDataset({ ...dataset, language }).query
-    : EMPTY_QUERY.QUERY;
+) => {
+  if (!dataset || language === SupportLanguageType.ppl) return EMPTY_QUERY.QUERY;
+  return queryString.getInitialQueryByDataset({ ...dataset, language }).query ?? EMPTY_QUERY.QUERY;
+};
 
 /**
- * Get languages for a dataset selected in the vis editor, from its dataset type's supportedLanguages
+ * Languages the vis editor offers on a dataset: its built-in ones plus those the dataset's own
+ * source lists. SQL only when SQL support is enabled.
  */
-export const getDatasetLanguages = (
-  services: ExploreServices,
-  dataset: Dataset
-): SupportLanguageType[] => {
-  // currently, editor only supports three languages
-  // TODO check again for metric
-  const editorLanguages = [
+export const getEditorLanguages = (services: ExploreServices, dataset?: Dataset): string[] => {
+  const builtIn: string[] = [
     SupportLanguageType.ppl,
     SupportLanguageType.promQL,
-    ...(services.sqlSupportEnabled ? [SupportLanguageType.sql] : []),
+    SupportLanguageType.sql,
   ];
+  const sourceLanguages = Object.keys(
+    getSourceTypeRegistry().getForDataset(dataset).languageSettings ?? {}
+  );
+  return Array.from(new Set([...builtIn, ...sourceLanguages])).filter(
+    (languageId) => services.sqlSupportEnabled || languageId !== SupportLanguageType.sql
+  );
+};
+
+/**
+ * The editor's languages for a dataset that its dataset type can run.
+ */
+export const getDatasetLanguages = (services: ExploreServices, dataset: Dataset): string[] => {
   const supported =
     services.data?.query?.queryString
       ?.getDatasetService?.()
       ?.getType(dataset.type)
       ?.supportedLanguages(dataset) ?? [];
-  return editorLanguages.filter((language) => supported.includes(language));
+
+  return getEditorLanguages(services, dataset).filter((language) => supported.includes(language));
 };
 
 /**
@@ -325,11 +340,6 @@ export const resolveDatasetLanguage = (
   return supportedLanguages?.[0] ?? dataset?.language ?? 'PPL';
 };
 
-/**
- * queryOptions only apply to metrics languages (PromQL);
- * any other language gets them cleared. Cleared with `undefined`, not omitted: the global
- * queryString.setQuery merges into the current query, so an omitted key would keep the old value.
- */
 export const withLanguageQueryOptions = <T extends { language?: string; queryOptions?: unknown }>(
   query: T
 ): T =>
