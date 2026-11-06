@@ -68,7 +68,7 @@ export const VisualizationEditorPage = ({
 
   const [initialized, setInitialized] = useState(false);
 
-  const { savedExplore, savedQueryState, savedVisConfig, error, isLoading } =
+  const { savedExplore, savedContainerState, savedVisConfig, error, isLoading } =
     useInitialSaveExplore();
 
   // update breadcrumbs
@@ -111,9 +111,11 @@ export const VisualizationEditorPage = ({
       if (needsDashboardSelection) return;
 
       if (!container.isLoaded()) {
+        // merge url states and saved states and validate query and dataset
+        // return merged state and warnings when query and dataset are incompatible
         const { state: containerState, warnings } = await loadContainerState(
           services,
-          savedQueryState ? [savedQueryState] : undefined
+          savedContainerState
         );
         if (cancelled) return;
 
@@ -134,8 +136,13 @@ export const VisualizationEditorPage = ({
             dataTransformations: savedVisConfig.dataTransformations,
           });
         }
+
+        // set baseline for visualization states and query states, used in dirty editor check
+        // set baseline before init() to include URL's states.
+        visualizationBuilderForEditor.setSavedBaseline();
         visualizationBuilderForEditor.init();
         container.load(containerState);
+        container.setSavedBaseline(savedExplore.id ? savedContainerState : undefined);
 
         // For an existing saved explore, execute the query on page load. For a new saved explore,
         // execute only when it is not empty, which avoids fixing the visualization persisted as a
@@ -156,7 +163,7 @@ export const VisualizationEditorPage = ({
   }, [
     savedExplore,
     needsDashboardSelection,
-    savedQueryState,
+    savedContainerState,
     savedVisConfig,
     visualizationBuilderForEditor,
     container,

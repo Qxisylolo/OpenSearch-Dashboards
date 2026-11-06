@@ -196,7 +196,7 @@ export class TransformationService implements ITransformationService {
     if (instances.length === 0) {
       this.stageFields$.next(new Map());
       this.stepResults$.next(new Map());
-      return { rows: rawRows, finalSchema: originalSchema, steps: [] };
+      return { rows: inputRows, finalSchema: inputSchema, steps: [] };
     }
 
     const stageFields = new Map<string, FieldSchema[]>();

@@ -7,7 +7,7 @@ import { ToastsStart } from 'opensearch-dashboards/public';
 import { getQueryLabel } from '../../../../../data/common';
 import { EXPLORE_DEFAULT_LANGUAGE } from '../../../../common';
 import { ExploreServices } from '../../../types';
-import { QueryState } from '../query_builder/query_builder';
+import { QueryState, QueryEditorState } from '../query_builder/query_builder';
 import {
   resolveDatasetLanguage,
   getInitialQueryString,
@@ -23,6 +23,9 @@ import {
   UrlMultiEditorState,
   UrlRowEntry,
 } from './utils';
+import { withLanguageQueryOptions } from '../query_builder/utils';
+import { EditorMode } from '../../../application/utils/state_management/types';
+import { getRowsMaxDataPoints } from './utils';
 
 export interface ContainerState {
   queries: Array<UrlRowEntry<QueryState>>;
@@ -35,17 +38,19 @@ export interface ContainerStateWarning {
   refId: string;
 }
 
+const EMPTY_CONTAINER_STATE: ContainerState = { queries: [], editorState: { rows: [] } };
+
 /**
  * Merges the URL and the saved object state. URL has higher priority
  */
 export const mergeContainerState = (
   url: ContainerState,
-  savedQueries: QueryState[] = []
+  saved: ContainerState = EMPTY_CONTAINER_STATE
 ): ContainerState => {
-  const source: Array<UrlRowEntry<QueryState>> =
-    url.queries.length > 0
-      ? url.queries
-      : savedQueries.map((query, index) => [getQueryLabel(index), query]);
+  const fromUrl = url.queries.length > 0;
+
+  const { queries: source, editorState } = fromUrl ? url : saved;
+
   // avoid duplicate refId from url
   const seen = new Set<string>();
   const queries = source.filter(([refId]) => {
@@ -56,7 +61,7 @@ export const mergeContainerState = (
 
   // for each row's editor state, only apply to rows that exist
   const refIds = new Set(queries.map(([refId]) => refId));
-  const { selectedRowRefId, maxDataPoints, rows } = url.editorState;
+  const { selectedRowRefId, maxDataPoints, rows } = editorState;
   return {
     queries,
     editorState: {
@@ -70,16 +75,17 @@ export const mergeContainerState = (
 const readUrlContainerState = (services: ExploreServices): ContainerState => {
   const urlStateStorage = services.osdUrlStateStorage;
   if (!urlStateStorage) {
-    return { queries: [], editorState: { rows: [] } };
+    return EMPTY_CONTAINER_STATE;
   }
 
   try {
-    return {
-      queries: normalizeUrlQueries(urlStateStorage.get(QUERY_BUILDER_QUERY_STATE_KEY)),
-      editorState: normalizeUrlEditorState(urlStateStorage.get(QUERY_EDITOR_STATE_KEY)),
-    };
+    const queries = normalizeUrlQueries(urlStateStorage.get(QUERY_BUILDER_QUERY_STATE_KEY));
+    const editorState = normalizeUrlEditorState(urlStateStorage.get(QUERY_EDITOR_STATE_KEY));
+    // a legacy URL keeps the shared value on its single query's queryOptions
+    const maxDataPoints = editorState.maxDataPoints ?? getRowsMaxDataPoints(queries);
+    return { queries, editorState: { ...editorState, maxDataPoints } };
   } catch {
-    return { queries: [], editorState: { rows: [] } };
+    return EMPTY_CONTAINER_STATE;
   }
 };
 
@@ -106,21 +112,20 @@ const buildDefaultQuery = async (services: ExploreServices): Promise<QueryState>
  * Load the container's starting state: URL over saved queries
  * For a new editor, set a default row;
  * Each restored row is verified with verifyQueryAndDataset.
- * Will return warnings if the dataset is not valid for three cases:
- * 1. dataset doesn;t exist
- * 2. dataset is not compatible with language
- * 3. dataset is no longer available
+ * Will return warnings if the dataset is not valid for following cases:
+ * 1. dataset is not compatible with language
+ * 2. dataset is no longer available
  */
 export const loadContainerState = async (
   services: ExploreServices,
-  savedQueries?: QueryState[]
+  saved?: ContainerState
 ): Promise<{ state: ContainerState; warnings: ContainerStateWarning[] }> => {
-  const container = mergeContainerState(readUrlContainerState(services), savedQueries);
+  const mergedStates = mergeContainerState(readUrlContainerState(services), saved);
 
-  if (container.queries.length === 0) {
+  if (mergedStates.queries.length === 0) {
     return {
       // no loaded quries, set a default one
-      state: { ...container, queries: [[getQueryLabel(0), await buildDefaultQuery(services)]] },
+      state: { ...mergedStates, queries: [[getQueryLabel(0), await buildDefaultQuery(services)]] },
       warnings: [],
     };
   }
@@ -128,14 +133,14 @@ export const loadContainerState = async (
   const warnings: ContainerStateWarning[] = [];
   // Rows verify in parallel.
   const queries = await Promise.all(
-    container.queries.map(async ([refId, query]): Promise<UrlRowEntry<QueryState>> => {
+    mergedStates.queries.map(async ([refId, query]): Promise<UrlRowEntry<QueryState>> => {
       const { query: verified, warning } = await verifyQueryAndDataset(services, query);
 
       if (warning) warnings.push({ kind: warning, refId });
       return [refId, verified];
     })
   );
-  return { state: { ...container, queries }, warnings };
+  return { state: { ...mergedStates, queries }, warnings };
 };
 
 export const showContainerStateWarnings = (
@@ -153,3 +158,39 @@ export const showContainerStateWarnings = (
     }
   });
 };
+
+/** One row as it is saved: what it runs and whether it's hidden. */
+export interface SaveableRow {
+  refId: string;
+  queryState: QueryState;
+  isHidden?: boolean;
+  // row in prompt mode saves lastExecutedTranslatedQuery
+  editorMode?: QueryEditorState['editorMode'];
+  lastExecutedTranslatedQuery?: string;
+}
+
+/**
+ * The rows as the saved object stores them. The panel's max data points goes on each row's own
+ * queryOptions (where saved queries have always kept it); a non-metrics row keeps no
+ * queryOptions. The editor state keeps only which rows are hidden.
+ */
+export const toSavedContainerState = (
+  rows: SaveableRow[],
+  maxDataPoints?: number
+): ContainerState => ({
+  queries: rows.map(({ refId, queryState, editorMode, lastExecutedTranslatedQuery }) => {
+    const query = withLanguageQueryOptions({
+      ...queryState,
+      queryOptions: { ...queryState.queryOptions, maxDataPoints },
+    });
+    return [
+      refId,
+      editorMode === EditorMode.Prompt
+        ? { ...query, query: lastExecutedTranslatedQuery ?? query.query }
+        : query,
+    ];
+  }),
+  editorState: {
+    rows: rows.map(({ refId, isHidden }) => [refId, { isHidden: !!isHidden }]),
+  },
+});

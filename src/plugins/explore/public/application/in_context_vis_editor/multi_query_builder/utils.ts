@@ -13,6 +13,7 @@ import {
   QueryExecutionStatus,
   QueryResultStatus,
 } from '../../../application/utils/state_management/types';
+import { ContainerState } from './container_state_utils';
 
 export type QueryRows = QueryBuilder[];
 export type UrlRowEntry<T> = [refId: string, state: T];
@@ -158,3 +159,71 @@ export const resolveRawTableRefId = (
   rawTableRefId?: string
 ): string | undefined =>
   series.some((s) => s.refId === rawTableRefId) ? rawTableRefId : series[0]?.refId;
+
+/**
+ * A saved row: its query plus whether it's hidden. The saved explore's `queries` attribute is a
+ * list of these, so a row's state stays with the row.
+ */
+export type SavedQueryRow = [refId: string, query: QueryState & { isHidden?: boolean }];
+
+/** The rows for the saved `queries` attribute: each row's hidden state goes on its query. */
+export const toSavedQueries = (state: ContainerState): SavedQueryRow[] => {
+  const hidden = new Set(
+    state.editorState.rows.filter(([, row]) => row.isHidden).map(([refId]) => refId)
+  );
+  return state.queries.map(([refId, query]) => [
+    refId,
+    hidden.has(refId) ? { ...query, isHidden: true } : query,
+  ]);
+};
+
+/**
+ * Reads the saved `queries` attribute back into rows and their editor state. Undefined when it's
+ * missing, unparsable or has no rows, so the caller falls back to the legacy single query in
+ * searchSourceJSON.
+ */
+export const parseSavedContainerState = (raw?: string): ContainerState | undefined => {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    // A list of rows only (normalizeUrlQueries would take a lone object as row A).
+    if (!Array.isArray(parsed)) return undefined;
+    const rows = normalizeUrlQueries(parsed) as SavedQueryRow[];
+    if (rows.length === 0) return undefined;
+
+    const queries: Array<UrlRowEntry<QueryState>> = rows.map(([refId, { isHidden, ...query }]) => [
+      refId,
+      query,
+    ]);
+    return {
+      queries,
+      editorState: {
+        // maxDataPoints is global shared setting, it saves inside query as query option but is stored as global editor states
+        maxDataPoints: getRowsMaxDataPoints(queries),
+        rows: rows.map(([refId, { isHidden }]) => [refId, { isHidden: !!isHidden }]),
+      },
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+export const buildSingleQueryToList = (
+  query?: QueryState
+): { queries: Array<UrlRowEntry<QueryState>>; editorState: UrlMultiEditorState } | undefined => {
+  if (!query) return undefined;
+  return {
+    queries: [[SINGLE_QUERY_REF_ID, query]],
+    editorState: { maxDataPoints: query.queryOptions?.maxDataPoints, rows: [] },
+  };
+};
+
+/**
+ * The panel's max data points from saved rows: each metrics row keeps the shared value on its
+ * queryOptions, so take the first one's.
+ */
+export const getRowsMaxDataPoints = (queries: Array<UrlRowEntry<QueryState>>) => {
+  return queries
+    .map(([_, query]) => query.queryOptions?.maxDataPoints)
+    .find((value) => value !== undefined);
+};

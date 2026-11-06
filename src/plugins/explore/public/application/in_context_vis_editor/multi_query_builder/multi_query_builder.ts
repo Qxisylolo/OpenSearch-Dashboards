@@ -31,7 +31,8 @@ import {
   getQueryLabelIndex,
 } from './utils';
 import { QUERY_BUILDER_QUERY_STATE_KEY, QUERY_EDITOR_STATE_KEY } from '../types';
-import { ContainerState } from './container_state_utils';
+import { ContainerState, SaveableRow, toSavedContainerState } from './container_state_utils';
+import { QueriesSnapshot, toQueriesSnapshot } from './editor_snapshot';
 
 import {
   EditorMode,
@@ -86,6 +87,9 @@ export class MultiQueryBuilder {
   private executionRun = 0;
 
   public variableNames$ = new BehaviorSubject<string[]>([]);
+
+  // mark queries dirty when their current snapshot differs (getIsDirty$).
+  public savedQueriesSnapshot$ = new BehaviorSubject<QueriesSnapshot | undefined>(undefined);
   private interpolationService?: IVariableInterpolationService;
 
   private getServices: () => ExploreServices;
@@ -113,12 +117,12 @@ export class MultiQueryBuilder {
    * Load the container from its resolved states: builds every row with its
    * final state, restores the editor state, then starts the global and URL syncs.
    */
-  load(session: ContainerState): void {
+  load(container: ContainerState): void {
     if (this.loaded) {
       return;
     }
 
-    this.loadQueryRows(session.queries, session.editorState);
+    this.loadQueryRows(container.queries, container.editorState);
 
     this.setupGlobalDataRangeSync();
     this.setupTimefilterToDateRangeSync();
@@ -253,7 +257,8 @@ export class MultiQueryBuilder {
     const row = new QueryBuilder(
       this.getServices,
       refId ?? this.nextRefId(),
-      () => this.interpolationService
+      () => this.interpolationService,
+      () => ({ maxDataPoints: this.multiQueryEditorState$.getValue().maxDataPoints })
       // // Only a lone visible row may apply an agent-generated time range (hidden rows don't run).
       // () => this.getAllRows().filter((r) => !r.getQueryEditorState().isHidden).length <= 1
     );
@@ -514,7 +519,7 @@ export class MultiQueryBuilder {
    * getVisibleRowExecutionStates$(): return each visible row's status and result in row order.
    * getAggregateStatus$(): runs every visible row in parallel; one row failing doesn't stop the others. userInitiated: false runs executeQuery directly.
    * getSeriesResult$(): return READY visible rows' results, always in row order. Emits only when the all queries are finished.
-   * getQueryRowItems$() / getQueryRowItems(): every row (hidden ones too) as a list item, in row order.
+   * getQueryRowItems$() / getQueryRowItems(): every row (hidden ones too) as a list item(for UI display in section panel), in row order.
    */
 
   getQueryRowItems$(): Observable<RowListItem[]> {
@@ -640,6 +645,111 @@ export class MultiQueryBuilder {
     }
   }
 
+  /* --- Saved object state ---
+   * - getContainerState(): every row and the editor state as the saved object stores them.
+   * - getContainerState$(): the same, on every change (for the editor's dirty check).
+   */
+
+  private toSaveableRow(row: QueryBuilder): SaveableRow {
+    const { isHidden, editorMode, lastExecutedTranslatedQuery } = row.getQueryEditorState();
+    return {
+      refId: row.refId,
+      queryState: row.queryState$.getValue(),
+      isHidden,
+      editorMode,
+      lastExecutedTranslatedQuery,
+    };
+  }
+
+  getContainerState(): ContainerState {
+    return toSavedContainerState(
+      this.getAllRows().map((row) => this.toSaveableRow(row)),
+      this.multiQueryEditorState$.getValue().maxDataPoints
+    );
+  }
+
+  /**
+   * Sets the dirty check's baseline, use savedQueriesSnapshot$ as obseval for opening a visualization inside
+   */
+  setSavedBaseline(saved?: ContainerState) {
+    // The saved rows as save would write them (e.g. a non-metrics row drops leftover
+    // queryOptions), so they compare equal to the same rows once loaded.
+    const state = saved
+      ? toSavedContainerState(
+          saved.queries.map(([refId, queryState]) => ({
+            refId,
+            queryState,
+            isHidden: saved.editorState.rows.find(([id]) => id === refId)?.[1].isHidden,
+          })),
+          saved.editorState.maxDataPoints
+        )
+      : this.getContainerState();
+    this.savedQueriesSnapshot$.next(toQueriesSnapshot(state));
+  }
+
+  /** The rows as they'd be saved now, for the dirty check. */
+  getQueriesSnapshot(): QueriesSnapshot {
+    return toQueriesSnapshot(this.getContainerState());
+  }
+
+  /** Makes the given snapshot (by default, the current rows) the saved baseline. */
+  markSaved(snapshot: QueriesSnapshot = this.getQueriesSnapshot()) {
+    this.savedQueriesSnapshot$.next(snapshot);
+  }
+
+  /** Whether the rows differ from the saved baseline; changing one back is clean again. */
+  getIsDirty$(): Observable<boolean> {
+    return combineLatest([this.getContainerState$(), this.savedQueriesSnapshot$]).pipe(
+      map(([state, saved]) => !!saved && !isEqual(toQueriesSnapshot(state), saved)),
+      distinctUntilChanged()
+    );
+  }
+
+  getContainerState$(): Observable<ContainerState> {
+    const rows$ = this.queryRows$.pipe(
+      switchMap((rows) =>
+        rows.length > 0
+          ? combineLatest(
+              rows.map((row) =>
+                combineLatest([
+                  row.queryState$,
+                  row.queryEditorState$.pipe(
+                    map(({ isHidden, editorMode, lastExecutedTranslatedQuery }) => ({
+                      isHidden,
+                      editorMode,
+                      lastExecutedTranslatedQuery,
+                    })),
+                    distinctUntilChanged((prev, curr) => isEqual(prev, curr))
+                  ),
+                ]).pipe(
+                  map(([queryState, editorState]): SaveableRow => ({
+                    refId: row.refId,
+                    queryState,
+                    ...editorState,
+                  }))
+                )
+              )
+            )
+          : of([] as SaveableRow[])
+      )
+    );
+    const maxDataPoints$ = this.multiQueryEditorState$.pipe(
+      map(({ maxDataPoints }) => maxDataPoints),
+      distinctUntilChanged()
+    );
+    return combineLatest([rows$, maxDataPoints$]).pipe(
+      map(([rows, maxDataPoints]) => toSavedContainerState(rows, maxDataPoints))
+    );
+  }
+
+  /* --- Query options ---
+   * Panel-level, shared by every row: each metrics row runs with them (QueryBuilder reads them
+   * through a getter at execution time)
+   */
+  setMaxDataPoints(maxDataPoints?: number) {
+    this.updateMultiQueryEditorState({ maxDataPoints });
+  }
+
   updateMultiQueryEditorState(updates: Partial<MultiQueryEditorState>) {
     const currentState = this.multiQueryEditorState$.value;
     this.multiQueryEditorState$.next({
@@ -710,5 +820,6 @@ export class MultiQueryBuilder {
     this.multiQueryEditorState$.complete();
     this.isExecuting$.complete();
     this.variableNames$.complete();
+    this.savedQueriesSnapshot$.complete();
   }
 }

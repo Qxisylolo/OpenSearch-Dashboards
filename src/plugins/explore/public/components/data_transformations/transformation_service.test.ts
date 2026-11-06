@@ -492,7 +492,7 @@ describe('TransformationService', () => {
       service.addInstance('missing');
       service.addInstance('limit');
 
-      service.applyPipeline([createHit({ a: 1 })]);
+      service.applyPipeline([createRow({ a: 1 })]);
 
       const results = service.stepResults$.getValue();
       expect(results.get('missing_1')).toMatchObject({
@@ -505,10 +505,10 @@ describe('TransformationService', () => {
     it('clears when the pipeline is empty', () => {
       service.registerDefinition(createMockDefinition('limit'));
       service.addInstance('limit');
-      service.applyPipeline([createHit({ a: 1 })]);
+      service.applyPipeline([createRow({ a: 1 })]);
       service.setPipeline([]);
 
-      service.applyPipeline([createHit({ a: 1 })]);
+      service.applyPipeline([createRow({ a: 1 })]);
 
       expect(service.stepResults$.getValue().size).toBe(0);
     });

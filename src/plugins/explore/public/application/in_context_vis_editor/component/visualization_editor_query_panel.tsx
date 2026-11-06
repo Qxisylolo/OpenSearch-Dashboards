@@ -13,7 +13,6 @@ import { QueryPanelEditor } from './query_editor';
 import { MetricMultiQueryPanelEditor } from './metric_multi_query_editor';
 import { SourceQueryPanelEditor } from './source_query_panel_editor';
 import { getSourceTypeRegistry } from '../../../services/source_type_registry';
-import { useQueryBuilderState } from '../hooks/use_query_builder_state';
 import { QueryPanelGeneratedQuery } from './generated_query_panel';
 import { PPLBuilder } from '../../pages/logs/ppl_builder';
 import { ModeButtonGroup } from '../../pages/logs/ppl_builder/mode_button_group';

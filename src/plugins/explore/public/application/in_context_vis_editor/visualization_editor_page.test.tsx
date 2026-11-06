@@ -75,12 +75,15 @@ const mockContainer = {
   reset: jest.fn(),
   getAllRows: jest.fn(() => [mockQueryBuilder]),
   setVariableNames: jest.fn(),
+  setSavedBaseline: jest.fn(),
 };
 
 const mockVisualizationBuilder = {
   setVisConfig: jest.fn(),
   init: jest.fn(),
   reset: jest.fn(),
+  visConfig$: { getValue: jest.fn() },
+  setSavedBaseline: jest.fn(),
 };
 
 const mockServices = {
